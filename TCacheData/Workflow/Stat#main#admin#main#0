@@ -1,0 +1,8 @@
+Stat "main#admin#main#0" 3 0 True [ v22, v23, v24, v25] 0 Nothing 
+where{
+ v22= Dyn 0 ;
+ v23= Dyn 0 ;
+ v24= Dyn 0 ;
+ v25= Dyn 0 ;
+ 
+}
