@@ -4,12 +4,15 @@ import Control.Workflow
 import Control.Concurrent(threadDelay)
 import System.IO (hFlush,stdout)
 
+printLine x= do
+   putStr (show x ++ " ")
+   hFlush stdout
+   threadDelay 1000000
 
-mcount n= do step $  do
-                       putStr (show n ++ " ")
-                       hFlush stdout
-                       threadDelay 1000000
+
+mcount :: Int -> Workflow IO ()
+mcount n= do step $  printLine n
              mcount (n+1)
-             return () -- to specify the return type
 
-main= exec1  "count"  $ mcount (0 :: Int)
+
+main=  exec1  "count"  $ mcount 0

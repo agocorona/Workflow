@@ -1,0 +1,8 @@
+623 12                                          
+ [ "Document \"title\"  [ \"title\"   , \"asad\"   , \"asd\"   ]   "  , "Document \"title\"  [ \"title\"   , \"asad\"   , \"asd\"   ]   "   , "Just True   "   , "WFInfo {name = \"anon13412430160\", finished = True, haserror = Nothing}   "   , "Just True   "   , "WFInfo {name = \"anon13412430161\", finished = True, haserror = Nothing}   "   , "[ v38 , v38 ]  "   , "v40 "   , "WFInfo {name = \"anon13412431620\", finished = False, haserror = Nothing}   "   , "v40 "   , "WFInfo {name = \"anon13412431621\", finished = False, haserror = Nothing}   "   , "1341243162   "   ]  
+ Stat "docApprobal/Doc#title"  12  ( Nothing ) 0  
+where{
+ v38= True  ;
+ v40= Nothing ;
+ 
+}

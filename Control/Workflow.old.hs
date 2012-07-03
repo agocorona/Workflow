@@ -7,8 +7,6 @@
             , FlexibleContexts
             , TypeSynonymInstances
             , DeriveDataTypeable
-            , RecordWildCards
-            , BangPatterns
           #-}
 {-# OPTIONS -IControl/Workflow       #-}
 
@@ -93,13 +91,13 @@ module Control.Workflow
 , WFErrors(..)
 -- * Lifting to the Workflow monad
 , step
---, while
---, label
---, stepControl
+, while
+, stepControl
 --, stepDebug
 , unsafeIOtoWF
 -- * References to intermediate values in the workflow log
 , WFRef
+, getWFRef
 , newWFRef
 , stepWFRef
 , readWFRef
@@ -158,7 +156,7 @@ import Data.List as L
 import Data.Typeable
 import System.Time
 import Control.Monad.Trans
-import Control.Concurrent.MonadIO(HasFork(..),MVar,newMVar,takeMVar,putMVar,readMVar)
+import Control.Concurrent.MonadIO(HasFork(..),MVar,newMVar,takeMVar,putMVar)
 
 
 import System.IO(hPutStrLn, stderr)
@@ -171,15 +169,14 @@ import qualified Control.Monad.CatchIO as CMC
 import qualified Control.Exception.Extensible as E
 
 import Data.TCache
-import Data.TCache.Defs
+import Data.TCache.DefaultPersistence
 import Data.RefSerialize
 import Control.Workflow.IDynamic
 import Unsafe.Coerce
-import System.Mem.StableName
 import Control.Workflow.Stat
 
---import Debug.Trace
---a !> b= trace b a
+import Debug.Trace
+a !> b= trace b a
 
 
 type Workflow m = WF  Stat  m   -- not so scary
@@ -244,11 +241,8 @@ instance  (Monad m
 instance (MonadTrans t, Monad m) => PMonadTrans t m a where
     plift= Control.Monad.Trans.lift
 
---- | handle with care: this instance  will force
--- the unwanted execution at recovery of every liftted IO procedure
--- better use 'step . liftIO'  instead of 'liftIO'
-instance MonadIO m => MonadIO (WF Stat  m) where
-   liftIO= unsafeIOtoWF
+instance Monad m => MonadIO (WF Stat  m) where
+   liftIO=unsafeIOtoWF
 
 
 {- | adapted from MonadCatchIO-mtl. Workflow need to express serializable constraints about the  returned values,
@@ -298,33 +292,24 @@ instance (Serialize a
 
    unblock exp=  WF $ \s -> CMC.unblock (st exp $ s)
 
-data WFInfo= WFInfo{ name :: String
-                      , finished :: Bool
-                      , haserror ::  Maybe WFErrors }
-                      deriving  (Typeable,Read, Show)
 
 
-
-instance  (HasFork io, MonadIO io
+instance  (HasFork io
           , CMC.MonadCatchIO io)
-
           => HasFork (WF Stat  io) where
    fork f = do
-    (r,info@(WFInfo str finished status)) <- stepWFRef $ getTempName >>= \n -> return(WFInfo n False  Nothing)
+    (str, finished) <- step $ getTempName >>= \n -> return(n, False)
+    r <- getWFRef
+    WF (\s ->
+       do th <- if finished
+                   then  fork $ return ()
+                   else fork $ do
+                               exec1 str f
+                               liftIO $ atomicallySync $ writeWFRef r (str, True)
 
-    WF $ \s -> do
-        th <- if finished then fork $ return()
-               else
-                fork $
-                     exec1 str f >> labelFinish r str Nothing
-                        `CMC.catch` \(e :: E.SomeException) -> do
-                                     liftIO . atomicallySync $ writeWFRef r (WFInfo str True . Just . WFException $ show e)   !> ("ERROR *****"++show e)
-                                     killWF1 $ keyWF str ()
+          return(s,th))
 
 
-        return (s,th)
-    where
-    labelFinish r str err= liftIO . atomicallySync $ writeWFRef r (WFInfo str True err)   !> "finished"
 
 
 -- | start or restart an anonymous workflow inside another workflow.
@@ -340,7 +325,7 @@ wfExec f= do
 
 -- | a version of exec1 that deletes its state after complete execution or thread killed
 exec1d :: (Serialize b, Typeable b
-          ,MonadIO m, CMC.MonadCatchIO m)
+          ,CMC.MonadCatchIO m)
           => String ->  (Workflow m b) ->  m  b
 exec1d str f= do
    r <- exec1 str  f
@@ -402,16 +387,10 @@ getTempName= liftIO $ do
 
 
 
----- | Permits the modification of the workflow state by the procedure being lifted
----- if the boolean value is True. This is used internally for control purposes
---stepControl :: ( Monad m
---        , MonadIO m
---        , Serialize a
---        , Typeable a)
---        =>   m a
---        ->  Workflow m a
---stepControl= stepControl1 True
 
+
+instance Indexable () where
+  key= show
 
 -- | Lifts a monadic computation  to the WF monad, and provides  transparent state loging and  resuming the computation
 -- Note: Side effect can be repeated at recovery time if the log was not complete before shut down
@@ -422,45 +401,49 @@ step :: ( Monad m
         , Typeable a)
         =>   m a
         ->  Workflow m a
+step= stepControl1 False
 
-step  mx= WF(\s -> do
-        let stat= state s
-        let versionss= versions s !> "vvvvvvvvvvvvvvvvvvv"
-                                  !> (unpack $ runW $ showp $  versions s)
-                                  !> (show $ references s)
-                                  !> (show $ "recover="++ show( recover s))
-                                  !> "^^^^^^^^^^^^^^^^^^^^"
-        if recover s && not (L.null versionss)
-          then
-            return (s{versions=L.tail versionss }, fromIDyn $ L.head versionss )
-          else do
-            let ref= self s
-            liftIO $ atomically $ do
-              s' <- readDBRef ref `justifyM` error ("step: not found: "++ wfName s)
-              writeDBRef ref s'{recover= False,references= references s}
-            stepExec  ref  mx)
+-- | Permits the modification of the workflow state by the procedure being lifted
+-- if the boolean value is True. This is used internally for control purposes
+stepControl :: ( Monad m
+        , MonadIO m
+        , Serialize a
+        , Typeable a)
+        =>   m a
+        ->  Workflow m a
+stepControl= stepControl1 True
 
-stepExec  sref  mx= do
+stepControl1 :: ( Monad m
+        , MonadIO m
+        , Serialize a
+        , Typeable a)
+        => Bool ->  m a
+        ->  Workflow m a
+stepControl1 isControl mx= WF(\s'' -> do
+        let stat= state s''
+        let ind= index s''
+        if recover s'' && ind < stat
+          then  return (s''{index=ind +1 }, fromIDyn $ versions s'' !! (stat - ind-1) )
+          else stepExec isControl s'' mx)
+
+stepExec isControl s'' mx= do
             x' <- mx
-
-            liftIO . atomicallySync $ do
-              s <- readDBRef  sref  >>= return . fromMaybe (error $ "step: readDBRef: not found:" ++ keyObjDBRef sref)
-
+            let sref = self s''
+            s'<- liftIO . atomicallySync $ do
+              s <- if isControl
+                     then readDBRef  sref  >>= return . fromMaybe (error $ "step: readDBRef: not found:" ++ keyObjDBRef sref)
+                     else return s''
               let versionss= versions s
-                  dynx=  toIDyn x'
-                  ver= dynx: versionss
-                  s'= s{ recover= False, versions =  ver, state= state s+1}
+              let dynx=  toIDyn x'
+              let ver= dynx: versionss
+              let s'= s{ recover= False, versions =  ver, state= state s+1}
 
               writeDBRef sref s'
-
-              return (s', x')
+              return s'
+            return (s', x')
 
 isInRecover :: Monad m => Workflow m Bool
-isInRecover = WF(\s@Stat{..} ->
-     if recover  && not (L.null  versions ) then  return(s,True )
-     else if recover== True then return(s{recover=False}, False)
-     else return (s,False))
-
+isInRecover = WF(\s->return(s,recover s && index s < state s))
 -- | For debugging purposes.
 -- At recovery time, instead of returning the stored value from the log
 -- , stepDebug executes the computation 'f' as normally.
@@ -476,66 +459,60 @@ stepDebug  f = r
  r= do
     WF(\s ->
         let stat= state s
+            ind = index s
 
-
-        in case recover s && not(L.null $ versions s) of
-            True  ->   f >>= \x -> return (s{versions= L.tail $ versions s},x)
-            False -> stepExec  (self s)  f)
+        in case recover s && ind < stat of
+            True  ->   f >>= \x -> return (s{index=index s +1},x)
+            False -> stepExec False s  f)
 
  typ :: m a -> a
  typ = undefined
 
-
-
-
-
-
--- | Executes a computation 'f' in a loop while the return valoe meets the condition 'cond' is met.
--- At recovery time, the current state of the loop is restored.
--- The loop restart at the last internal state that  was (saved) before shutdown.
+-- | Executes a computation in a loop while condition is met.
+-- At recovery time, the current state of the loop is stored.
+-- the loop restart at the last internal state that it was before shutdown.
+-- .
 --
--- The use of 'while' permits a faster recovery when the loop has many steps and the log is very long, as is the case in
--- NFlow applications,
---while
---  :: MonadIO m =>
---     (b -> Bool) ->  Workflow m b -> Workflow m b
---while  cond f= do
---   n <- WF $ \s -> return (s,state s - L.length (versions s))
-----       do
-----        let versionss= versions s
-----        if recover s && not (L.null versionss)
-----          then  return (s{versions=L.tail versionss }, fromIDyn $ L.head versionss )
-----
-----          else return(s{recover= False, state=state s + 1
-----                           ,versions= (toIDyn $ state s):versionss}
-----                           ,state s)
---   while1 n
---   where
---   while1 n =do
---           label n
---           x <- f
---           if cond x
---             then while1 n
---             else return x
+-- unlike a loop where `step´ may be used to checkpoint the internal lopp state,
+-- while does not make the logfile grow. Istead, it stores only the most recet step value
 --
---data Label= Label Int deriving (Eq,Typeable,Read,Show)
---label n  =  do
---    let !label= Label n
---    r <- isInRecover
---    if r
---      then  WF(\s@Stat{..} ->
---        let !label@(Label n) = fromIDyn $ L.head versions
---            !vers = filterMax  (\d -> Just label /= safeFromIDyn d) versions -- !> (show label)
---        in return (s{versions= L.tail  vers}, fromIDyn . L.head $  vers ))
---      else  do
---        step $ return label
---    where
---    filterMax  f xs=
---           case L.dropWhile  f (L.tail xs) of
---                [] ->  xs
---                [_] ->  xs
---                xs' -> filterMax  f xs'
---
+
+while
+  :: (Monad m,MonadIO m, Typeable a, Serialize a)
+  => (a -> Bool)      -- ^ condition to meet
+  -> a                -- ^ initial value
+  -> (a -> m a)       -- ^ iterated procedure
+  -> WF Stat m a
+while  cond x f = do
+  WF(\s -> if not $ recover s
+          then  return   (s{state= state s + 1,versions= toIDyn "" : versions s},())
+          else return (s,()))
+  while1 cond x f
+  where
+  while1 cond x f= do
+      x' <- override $ f x
+      if cond x' then while1 cond x' f
+                 else return x'
+
+  override mx=  WF(\s -> do
+        let stat= state s
+        let ind= index s
+        if recover s  && ind < stat
+          then  return (s{index=ind +1 }, fromIDyn $ versions s !! (stat - ind-1) )
+          else  do
+            x' <- mx
+            liftIO . atomicallySync $ do
+              let dynx=  toIDyn x'
+              let ver= dynx: Prelude.tail (versions s)
+              let s'= s{ recover= False, versions =  ver}
+              writeDBRef (self s) s'
+              return (s', x'))
+
+
+
+
+
+
 
 
 
@@ -546,7 +523,6 @@ stepDebug  f = r
 
 start
     :: ( CMC.MonadCatchIO m
-       , MonadIO m
        , Indexable a
        , Serialize a, Serialize b
        , Typeable a
@@ -570,34 +546,21 @@ start namewf f1 v =  do
            (\(e :: CE.SomeException) -> liftIO $ do
                  let name=  keyWF namewf v
                  clearRunningFlag name
-                 return . Left $ WFException $ show e )
+                 return . Left $ Exception e )
 
 
 -- | return conditions from the invocation of start/restart primitives
-data WFErrors = NotFound  | AlreadyRunning | Timeout | WFException String deriving (Typeable, Read, Show)
+data WFErrors = NotFound  | AlreadyRunning | Timeout | forall e.CE.Exception e => Exception e deriving Typeable
 
---instance Show WFErrors where
---  show NotFound= "Not Found"
---  show AlreadyRunning= "Already Running"
---  show Timeout= "Timeout"
---  show (Exception e)= "Exception: "++ show e
-
---instance Serialize WFErrors where
---  showp NotFound=  insertString "NotFound"
---  showp AlreadyRunning= insertString "AlreadyRunning"
---  showp Timeout= insertString "Timeout"
---  showp (Exception e)= insertString "Exception: ">> showp e
---
---  readp= choice[notfound,already,timeout, exc]
---   where
---   notfound= symbol "NotFound" >> return NotFound
---   already= symbol "AlreadyRunning" >> return AlreadyRunning
---   timeout= symbol "Timeout" >> return Timeout
---   exc= symbol "Exception" >> readp >>= \s -> return (Exception s)
+instance Show WFErrors where
+  show NotFound= "Not Found"
+  show AlreadyRunning= "Already Running"
+  show Timeout= "Timeout"
+  show (Exception e)= "Exception: "++ show e
 
 instance CE.Exception WFErrors
 
-
+--tvRunningWfs = unsafePerformIO  .    refDBRefIO $  Running (M.fromList [] :: Map String (String, (Maybe ThreadId)))
 
 {-
 lookup for any workflow for the entry value v
@@ -620,13 +583,11 @@ getState  namewf f v= liftIO . atomically $ getStateSTM
                getStateSTM
        Just(Running map) ->  do
          let key= keyWF namewf  v
-             dynv=  toIDyn v
-             stat1= stat0{wfName= key,versions=[dynv],state=1, self= sref}
+             stat1= stat0{wfName= key,versions=[toIDyn v],self= sref}
              sref= getDBRef $ keyResource stat1
          case M.lookup key map of
            Nothing -> do                        -- no workflow started for this object
              mythread <- unsafeIOToSTM $ myThreadId
-             safeIOToSTM $ delResource stat1 >> writeResource stat1
              writeDBRef tvRunningWfs . Running $ M.insert key (namewf,Just mythread) map
              writeDBRef sref stat1
              return $ Right (key, f, stat1)
@@ -643,11 +604,11 @@ getState  namewf f v= liftIO . atomically $ getStateSTM
                              if isJust (timeout s)
                               then if lastActive s+ fromJust(timeout s) > tnow  -- !>("lastActive="++show (lastActive s) ++ "tnow="++show tnow)
                                        then
-                                         return s{recover= True,timeout=Nothing}
+                                         return s{index=0,recover= True,timeout=Nothing}
                                        else
                                          -- has been inactive for too much time, clean it
                                          return stat1
-                              else     return s{recover= True}
+                              else     return s{index=0,recover= True}
 
 
                    writeDBRef sref stat'
@@ -662,8 +623,9 @@ runWF :: (Monad m,MonadIO m
          , Serialize b, Typeable b)
          =>  String ->  Workflow m b -> Stat  -> m  b
 runWF n f s= do
-   (s', v')  <-  st f s{versions= L.tail $ versions s} -- !> (show $ versions s)
+   (s', v')  <-  st f $ s -- !> (show $ versions s)
    liftIO $! clearFromRunningList n
+
    return  v'
    where
 
@@ -675,7 +637,7 @@ runWF n f s= do
 -- | Start or continue a workflow  from a list of workflows  with exception handling.
 --  see 'start' for details about exception and error handling
 startWF
-    ::  ( CMC.MonadCatchIO m, MonadIO m
+    ::  ( CMC.MonadCatchIO m
         , Serialize a, Serialize b
         , Typeable a
         , Indexable a
@@ -707,6 +669,8 @@ restartWorkflows map = do
   filter _  =  Nothing
 
   start (key, kv)= do
+
+
       let mf= Prelude.lookup key map
       case mf of
         Nothing -> return ()
@@ -716,12 +680,9 @@ restartWorkflows map = do
           case mst of
                    Nothing -> error $ "restartWorkflows: workflow not found "++ keyResource st0
                    Just st-> do
-                     liftIO  .  forkIO $ runWF key (f (fromIDyn . L.head $ versions st )) st{recover=True} >> return ()
+                     liftIO  .  forkIO $ runWF key (f (fromIDyn . Prelude.last $ versions st )) st{index=0,recover=True} >> return ()
                      return ()
---  ei <- getState  namewf f1 v
---  case ei of
---      Left error -> return $  Left  error
---      Right (name, f, stat) ->
+
 
 
 -- | return all the steps of the workflow log. The values are dynamic
@@ -732,18 +693,18 @@ restartWorkflows map = do
 getAll :: Monad m => Workflow m [IDynamic]
 getAll=  WF(\s -> return (s, versions s))
 
---getStep
---      :: (Serialize a, Typeable a,  Monad m)
---      => Int                                 -- ^ the step number. If negative, count from the current state backwards
---      -> Workflow m a                        -- ^ return the n-tn intermediate step result
---getStep i=  WF(\s -> do
---                let ind= index s
---                    stat= state s
---
---                return (s, if i > 0 && i < stat then fromIDyn $ versions s !! (stat -i-1)
---                           else if i <= 0 && i > -stat then fromIDyn $ versions s !! (stat - ind +i-1)
---                           else error "getStep: wrong index")
---             )
+getStep
+      :: (Serialize a, Typeable a,  Monad m)
+      => Int                                 -- ^ the step number. If negative, count from the current state backwards
+      -> Workflow m a                        -- ^ return the n-tn intermediate step result
+getStep i=  WF(\s -> do
+                let ind= index s
+                    stat= state s
+
+                return (s, if i > 0 && i < stat then fromIDyn $ versions s !! (stat -i-1)
+                           else if i <= 0 && i > -stat then fromIDyn $ versions s !! (stat - ind +i-1)
+                           else error "getStep: wrong index")
+             )
 
 -- | return the list of object keys that are running for a workflow
 getWFKeys :: String -> IO [String]
@@ -759,8 +720,7 @@ getWFHistory wfname x=  getResource stat0{wfName=  keyWF wfname  x}
 
 -- | delete the history of a workflow.
 -- Be sure that this WF has finished.
-
---{-# DEPRECATED delWFHistory, delWFHistory1 "use delWF and delWF1 instead" #-}
+{-# DEPRECATED delWFHistory, delWFHistory1 "use delWF and delWF1 instead" #-}
 
 delWFHistory name1 x = do
       let name= keyWF name1 x
@@ -868,90 +828,59 @@ clearRunningFlag name= liftIO $ atomically $ do
 --
 -- WARNING getWFRef can produce  casting errors  when the type demanded
 -- do not match the serialized data. Instead,  `newDBRef` and `stepWFRef` are type safe at runtuime.
---getWFRef ::  ( Monad m,
---               MonadIO m,
---               Serialize a
---             , Typeable a)
---             => Workflow m  (WFRef a)
---getWFRef =ret !> "geWFRef"
---   where
---   ret=   WF (\s -> do
---       let  n= if recover s then state s - (L.length $ versions s)
---                            else (state s -1)
---       let  ref = WFRef n (self s)
---       -- to reify the object being accessed
---       -- if not reified, the serializer will write a null object
---       let versionss= versions s
---       when ( L.null versionss) $  error "getWFRef: empty log, no step to point to"
---       let r= fromIDyn (L.head $ versionss) `asTypeOf` typeofRef ret
---       r `seq` return  (s,ref))
---       where
---       typeofRef :: Workflow m  (WFRef a) -> a
---       typeofRef= undefined -- never will be executed
-
+getWFRef ::  ( Monad m,
+               MonadIO m,
+               Serialize a
+             , Typeable a)
+             => Workflow m  (WFRef a)
+getWFRef =ret
+   where
+   ret=   WF (\s -> do
+       let     n= if recover s then index s else state s
+       let  ref = WFRef n (self s)
+       -- to reify the object being accessed
+       -- if not reified, the serializer will write a null object
+       let r= fromIDyn (versions s !!  (state s - n)) `asTypeOf` typeofRef ret
+       r `seq` return  (s,ref))
+       where
+       typeofRef :: Workflow m  (WFRef a) -> a
+       typeofRef= undefined -- never will be executed
+-- | Execute  an step but return a reference to the result instead of the result itself
+--
+-- @stepWFRef exp= `step` exp >>= `getWFRef`@
+stepWFRef :: ( Serialize a
+           , Typeable a
+           , MonadIO m)
+            => m a -> Workflow m  (WFRef a)
+stepWFRef exp= step exp >> getWFRef
 
 -- | Log a value and return a reference to it.
 --
 -- @newWFRef x= `step` $ return x >>= `getWFRef`@
 newWFRef :: ( Serialize a
            , Typeable a
-           , MonadIO m
-           , CMC.MonadCatchIO m)
-           => a -> Workflow m  (WFRef a)
-newWFRef x= stepWFRef (return  x) >>= return . fst
-
--- | Execute  an step but return a reference to the result besides the result itself
---
-stepWFRef :: ( Serialize a
-           , Typeable a
            , MonadIO m)
-            => m a -> Workflow m  (WFRef a,a)
-stepWFRef exp= do
-     r <- step exp  -- !> "stepWFRef"
-
-     WF(\s@Stat{..} -> do
-
-
-       let  (n,flag)= if recover  then (state  - (L.length  versions) -1  ,False)
-                          else (state -1 ,True)
-       let  ref = WFRef n self
-       let s'= s{references= (n,(toIDyn r,flag)):references }
-       liftIO $ atomically $ writeDBRef self s'
-       r  `seq` return  (s',(ref,r)) )
-
+           => a -> Workflow m  (WFRef a)
+newWFRef x= step (return x) >> getWFRef
 
 -- | Read the content of a Workflow reference. Note that its result is not in the Workflow monad
-readWFRef :: (  Serialize a
-             ,  Typeable a)
+readWFRef :: ( Serialize a
+             , Typeable a)
              => WFRef a
              -> STM (Maybe a)
 readWFRef (WFRef n ref)= do
-   mr <- readDBRef ref
-   case mr of
+  mr <- readDBRef ref
+  case mr of
     Nothing -> return Nothing
-    Just st ->
-      case  L.lookup n $! references st of
-        Just (r,_) -> return . Just $ fromIDyn r
-        Nothing -> do
-          let  n1=  state st - n
-          return . Just . fromIDyn $ versions st !! n1
+    Just s  -> do
+      let elems= versions s
+          l    =  state s -- L.length elems
+          x    = elems !! (l - n)
+      return . Just $! fromIDyn x
 
---      flushDBRef ref !> "readWFRef"
---      st <- readDBRef ref `justifyM` (error $ "readWFRef: reference has been deleted from storaga: "++ show ref)
-
---      let elems= case ms of
---            Just s -> versions s ++  (L.reverse $ L.take (state s' - state s)   (versions s'))
---            Nothing -> L.reverse $ versions s'
---          x    = elems !! n
---      writeDBRef ref s'
-
---      return . Just $! fromIDyn x
-
-
-justifyM io y=  io >>= return . fromMaybe y
 
 -- | Writes a new value en in the workflow reference, that is, in the workflow log.
--- Why would you use this?.  Don't do that!. modifiying the content of the workflow log would
+-- Why would you use this?.  Don do that!. modifiying the content of the workflow log would
 -- change the excution flow  when the workflow restarts. This metod is used internally in the package
 -- the best way to communicate with a workflow is trough a persistent queue:
 --
@@ -970,30 +899,19 @@ writeWFRef :: ( Serialize a
 writeWFRef  r@(WFRef n ref) x= do
   mr <- readDBRef ref
   case mr of
-    Nothing -> error $ "writeWFRef: workflow does not exist: " ++ show ref
-    Just st@Stat{..}  ->
-      writeDBRef ref st{references= add x references} !> ("writeWFREF"++ show r)
+    Nothing -> error $ "writeWFRef: workflow does not exist: " ++ keyObjDBRef ref
+    Just s  -> do
+      let elems= versions s
+          l    = state s -- L.length elems
+          p    = l - n
+          (h,t)= L.splitAt p elems
+          elems'= h ++ (toIDyn x:tail' t)
+          tail' []= []
+          tail' t= L.tail t
 
-  where
-  add x xs= (n,(toIDyn x,False)) : L.filter (\(n',_) -> n/=n') xs
---      flushDBRef ref !> "writeWFRef"
---      s <- safeIOToSTM $ readResourceByKey (keyObjDBRef ref) `justifyM` (error $ "writeWFRef: reference has been deleted from storaga: "++ show ref)
---      let elems= versions s ++  (L.reverse $ L.take (state s' - state s)   (versions s'))
---
---          (h,t)= L.splitAt n elems
---          elems'= h ++ (toIDyn x:tail' t)
---
---          tail' []= []
---          tail' t = L.tail t
+      writeDBRef  ref s{ versions= elems'}
 
-
-
---      elems `seq` writeDBRef  ref s{ versions= elems'}
---      safeIOToSTM $ delResource s >> writeResource s{ versions= L.map tosave $ L.reverse elems'}
---      writeDBRef ref s'
-
-
--- | moves the state of workflow with a seed value to become the state of other seed value
+-- | moves the state from a seed value to other.
 -- This may be of interest when the  entry value
 -- changes its key value but  should not initiate a new workflow
 -- but continues with the current one
@@ -1089,7 +1007,7 @@ waitForSTM
       -> STM b                           -- ^ The first event that meet the condition
 waitForSTM  filter wfname x=  do
     let name= keyWF wfname x
-    let tv=  getDBRef . keyResource $ stat0{wfName= name}       -- `debug` "**waitFor***"
+    let tv=  getDBRef . key $ stat0{wfName= name}       -- `debug` "**waitFor***"
 
     mmx  <-  readDBRef tv
     case mmx of
@@ -1105,8 +1023,7 @@ waitForSTM  filter wfname x=  do
 
 
 
---{-# DEPRECATED waitUntilSTM, getTimeoutFlag "use withTimeout instead" #-}
-
+{-# DEPRECATED waitUntilSTM, getTimeoutFlag "use withTimeout instead" #-}
 -- | Start the timeout and return the flag to be monitored by 'waitUntilSTM'
 -- This timeout is persistent. This means that the time start to count from the first call to getTimeoutFlag on
 -- no matter if the workflow is restarted. The time that the worlkflow has been stopped count also.
@@ -1203,7 +1120,7 @@ withKillTimeout id time time2 f = liftIO $ do
                     case ms of
                       Just s -> s{lastActive= tnow,timeout= Just (time2-fromIntegral time)}
                       Nothing -> error $ "withKillTimeout: Workflow not found: "++ id
-                  throw Timeout
+                  throw Timeout          !> "Timeout"
 
 
 transientTimeout 0= atomically $ newTVar False

@@ -1,8 +1,6 @@
 
 module Main where
 import Control.Workflow
-import Control.Workflow.Stat
-
 import Data.TCache
 import Control.Concurrent(threadDelay)
 import System.IO (hFlush,stdout)
@@ -11,18 +9,11 @@ import qualified Data.ByteString.Lazy.Char8 as B
 
 
 
-main2= do
-   Just stat <- getWFHistory "docApprobal" "Doc#title"
-   B.putStrLn $ showHistory stat
-   withResource stat $ \(Just stat) -> stat{recover= False}
-   syncCache
-
-
-
 main= do
+
    refs <- exec1 "WFRef" $ do
                  step $ return (1 :: Int)
-                 (ref,s) <- stepWFRef $ return "bye initial valoe"
+                 ref <- newWFRef  "bye initial valoe"
                  step $ return (3 :: Int)
 
                  return ref

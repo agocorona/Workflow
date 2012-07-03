@@ -1,18 +1,13 @@
 {-# LANGUAGE   DeriveDataTypeable
              , ScopedTypeVariables
+             , FlexibleInstances
              , FlexibleContexts
-
               #-}
 {-# OPTIONS -IControl/Workflow       #-}
 
 {- | This module contains monadic combinators that express some workflow patterns.
 see the docAprobal.hs example included in the package
 
-Here  the constraint `DynSerializer w r a` is equivalent to  `Data.Refserialize a`
-This version permits optimal (de)serialization if you store in the queue different versions of largue structures, for
-example, documents.  You must  define the right RefSerialize instance however.
-See an example in docAprobal.hs incuded in the paclkage.
-Alternatively you can use  Data.Binary serlializatiion with Control.Workflow.Binary.Patterns
 
 EXAMPLE:
 
@@ -25,12 +20,14 @@ if the resullt is false, the correctWF workflow is executed
 If the result is True, the pipeline continues to the next stage  (checkValidated)
 
 the next stage is the same process with a new list of users (superbosses).
-This time, there is a timeout of 7 days. the result of the users that voted is summed
+There is a timeout of seven days. The result of the users that voted is summed
 up according with the same monoid instance
 
 if the result is true the document is added to the persistent list of approbed documents
 if the result is false, the document is added to the persistent list of rejectec documents (checlkValidated1)
 
+The program can be interrupted at any moment. The Workflow monad will restartWorkflows
+it at the point where it was interrupted.
 
 @docApprobal :: Document -> Workflow IO ()
 docApprobal doc =  `getWFRef` \>>= docApprobal1
@@ -84,19 +81,19 @@ import Control.Workflow.Stat
 import Control.Workflow
 import Data.Typeable
 import Prelude hiding (catch)
-import Control.Monad(when)
-import Control.Exception.Extensible (Exception)
+import Control.Monad
+import Control.Exception.Extensible (Exception,SomeException)
 import Data.RefSerialize
 import Control.Workflow.Stat
-import Debug.Trace
+
 import Data.TCache
+import Debug.Trace
 
-a !> b = trace b a
 
-data ActionWF a= ActionWF (WFRef(Maybe a))  (WFRef (String, Bool))
+newtype ActionWF a= ActionWF (WFRef(Maybe a))  -- (WFRef (String, Bool))
 
--- | spawn a list of independent workflows (the first argument) with a seed value (the second argument).
--- Their results are reduced by `merge` or `select`
+-- | spawn a list of independent workflow 'actions' with a seed value 'a'
+-- The results are reduced by `merge` or `select`
 split :: ( Typeable b
            , Serialize b
            , HasFork io
@@ -105,9 +102,9 @@ split :: ( Typeable b
 split actions a = mapM (\ac ->
      do
          mv <- newWFRef Nothing
-         fork  (ac a >>= step . liftIO . atomically . writeWFRef mv . Just)
-         r <- getWFRef
-         return  $ ActionWF mv  r)
+         fork  (ac a >>= \v -> (step . liftIO . atomicallySync .  writeWFRef mv . Just) v )
+
+         return  $ ActionWF mv )
 
      actions
 
@@ -119,18 +116,20 @@ merge :: ( MonadIO io
            , Typeable b
            , Serialize a, Serialize b)
            => ([a] -> io b) -> [ActionWF a] -> Workflow io b
-merge  cond actions= mapM (\(ActionWF mv _) -> readWFRef1 mv ) actions >>= step . cond
+merge  cond results= step $ mapM (\(ActionWF mv ) -> readWFRef1 mv ) results >>=  cond -- !> "cond"
 
 readWFRef1 :: ( MonadIO io
               , Serialize a
               , Typeable a)
               => WFRef (Maybe a) -> io  a
-readWFRef1 mv = liftIO . atomically $ do
-      v <- readWFRef mv
-      case v of
-       Just(Just v)  -> return v
-       Just Nothing  -> retry
-       Nothing -> error $ "readWFRef1: workflow not found "++ show mv
+readWFRef1 r = liftIO . atomically $ do
+
+      mv <- readWFRef r
+
+      case mv of
+       Just(Just v)  -> return v -- !> "return v"
+       Just Nothing  -> retry -- !> "retry"
+       Nothing -> error $ "readWFRef1: workflow not found "++ show r
 
 
 data Select
@@ -144,12 +143,12 @@ instance Exception Select
 
 -- | select the outputs of the workflows produced by `split` constrained within a timeout.
 -- The check filter, can select , discard or finish the entire computation before
--- the timeout is reached. When the computation finalizes, it stop all
+-- the timeout is reached. When the computation finalizes, it kill all
 -- the pending workflows and return the list of selected outputs
--- the timeout is in seconds and is no limited to Int values, so it can last for years.
+-- the timeout is in seconds and is no limited to a single execution, so it can proceed for years.
 --
 -- This is necessary for the modelization of real-life institutional cycles such are political elections
--- timeout of 0 means no timeout.
+-- A timeout of 0 means no timeout.
 select ::
          ( Serialize a
          , Serialize [a]
@@ -164,10 +163,10 @@ select timeout check actions=   do
  res  <- newMVar []
  flag <- getTimeoutFlag timeout
  parent <- myThreadId
- checks <- newEmptyMVar
+ checThreads <- newEmptyMVar
  count <- newMVar 1
  let process = do
-        let check'  (ActionWF ac _) =  do
+        let check'  (ActionWF ac ) =  do
                r <- readWFRef1 ac
                b <- check r
                case b of
@@ -182,7 +181,7 @@ select timeout check actions=   do
                n <- CMC.block $ do
                      n <- takeMVar count
                      putMVar count (n+1)
-                     return n
+                     return n      !> ("SELECT" ++ show n)
 
                if ( n == length actions)
                      then throwTo parent FinishDiscard
@@ -190,9 +189,9 @@ select timeout check actions=   do
 
               `CMC.catch` (\(e :: Select) -> throwTo parent e)
 
-        do
-             ws <- mapM ( fork . check') actions
-             putMVar checks  ws
+
+        ws <- mapM ( fork . check') actions
+        putMVar checThreads  ws
 
         liftIO $ atomically $ do
            v <- readTVar flag -- wait fo timeout
@@ -207,28 +206,21 @@ select timeout check actions=   do
             putMVar  res $ r : l
 
  let killall  = do
-       mapM_ (\(ActionWF _ th) -> killWFP th) actions
-       ws <- readMVar checks
-       liftIO $ mapM_ killThread ws
+       ws <- readMVar checThreads
+       liftIO $ mapM_ killThread ws !> "KILLALL"
 
- stepControl $ CMC.catch   process -- (WF $ \s -> process >>= \ r -> return (s, r))
+ step $ CMC.catch   process -- (WF $ \s -> process >>= \ r -> return (s, r))
               (\(e :: Select)-> do
                  readMVar res
                  )
        `CMC.finally`   killall
 
-killWFP r= liftIO $ do
-    s <-  atomically $ do
-              (s,_)<- readWFRef r >>= justify ("wfSelect " ++ show r)
-              writeWFRef r (s, True)
-              return s
 
-    killWF  s ()
 
 justify str Nothing = error str
 justify _ (Just x) = return x
 
--- | spawn a list of workflows and reduces the results according with the comp parameter within a given timeout
+-- | spawn a list of workflows and reduces the results according with the 'comp' parameter within a given timeout
 --
 -- @
 --   vote timeout actions comp x=
@@ -265,6 +257,36 @@ sumUp
      -> Workflow io b
 sumUp timeout actions = vote timeout actions (return . mconcat)
 
+
+
+
+main= do
+  syncWrite SyncManual
+  r <- exec1 "sumup" $ sumUp 0 [f 1, f 2] "0"
+  print r
+
+  `CMC.catch` \(e::SomeException) -> syncCache !> "syncCache"
+
+
+f :: Int -> String -> Workflow IO String
+f n s= step (  threadDelay ( 5000000 * n)) >> return ( s ++"1")
+
+
+main2=do
+ syncWrite SyncManual
+ exec1 "split" $ split  (take 10 $ repeat (step . print)) "hi" >>= merge (const $ return True)
+
+
+main3=do
+--   syncWrite SyncManual
+   refs <- exec1 "WFRef" $ do
+
+                 refs <-  replicateM 20  $ newWFRef  Nothing --"bye initial valoe"
+                 mapM (\r -> fork $ unsafeIOtoWF $ atomically $ writeWFRef r $ Just "hi final value") refs
+
+
+                 return refs
+   mapM (\r ->  readWFRef1 r >>= print) refs
 
 
 

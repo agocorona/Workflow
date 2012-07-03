@@ -27,31 +27,29 @@ import Control.Monad(replicateM)
 import qualified Data.ByteString.Lazy.Char8 as B hiding (index)
 import  Data.ByteString.Char8(findSubstring)
 import Control.Workflow.IDynamic
-import Control.Concurrent
+import Control.Concurrent(forkIO)
 import Control.Exception(bracket,SomeException)
 import System.IO.Error
-
 import System.Directory
 import Data.List
-import Control.Monad
 
 import Debug.Trace
 
-(!>) a b= a -- flip trace
+(!>)= flip trace
 
 data WF  s m l = WF { st :: s -> m (s,l) }
 
 
 data Stat =  Running (M.Map String (String, (Maybe ThreadId)))
-          | Stat{ self      :: DBRef Stat
-                , wfName    :: String
-                , state     :: Int
-                , recover   :: Bool
-                , timeout   :: Maybe Integer
-                , lastActive:: Integer
-                , context   :: (Context, B.ByteString)
-                , references:: [(Int,(IDynamic,Bool))]
-                , versions  :: [IDynamic]
+          | Stat{ self :: DBRef Stat
+                , wfName :: String
+                , state:: Int
+                , recover:: Bool
+                , timeout :: Maybe Integer
+                , lastActive :: Integer
+                , context  :: (Context, B.ByteString)
+                , references :: [(Int,(IDynamic,Bool))]
+                , versions :: [IDynamic]
                 }
            deriving (Typeable)
 
@@ -65,7 +63,6 @@ statPrefix1= "Stat"
 statPrefix= statPrefix1 ++"/"
 
 header Stat{..}= do
-     insertString "\r\n"
      insertString $ B.pack statPrefix1
      showpText wfName
      showpText state
@@ -73,53 +70,45 @@ header Stat{..}= do
      showp timeout
      insertChar(')')
      showp lastActive
---     showp $ markAsWritten references
---     where
---     markAsWritten = map (\(n,(r,_)) -> (n,(r,True)))
-
-getHeader= do
-        symbol statPrefix1
-        wfName <- readp
-        state <- readp
-        timeout <- parens readp
-        lastActive <- readp
---        references <- readp
-        c   <- getRContext
-        return  (wfName, state, timeout, lastActive,[],c)
-
-lenLen= 50
+     showp $ markAsWritten references
+     where
+     markAsWritten = map (\(n,(r,_)) -> (n,(r,True)))
 
 
-instance  Serialize Stat where
-    showp (Running map)= do
-          insertString $ B.pack "Running"
-          showp $ Prelude.map (\(k,(w,_))  -> (k,w)) $ M.toList map
-
-
-    showp  stat@Stat{..} = do
-              s <- showps $ Prelude.reverse versions
-              let l= show (B.length s + lenLen) ++" "++ show state
-              insertString . B.pack $ l ++ take (fromIntegral lenLen - length l - 2) (repeat ' ')++ "\r\n"
-              insertString s
-              header stat
-
-    readp = choice [rStat, rWorkflows] <?> "on reading Workflow State" where
-        rStat= do
-              integer
-              integer
-              versions   <- readp
-              (wfName, state, timeout, lastActive,references,cont) <- getHeader
-
-
-              let self= getDBRef $ keyResource stat0{wfName= wfName}
-              return $ Stat self wfName   state   True  timeout lastActive
-                            cont references versions
-
-
-        rWorkflows= do
-               symbol "Running"
-               list <- readp
-               return $ Running $ M.fromList $ Prelude.map(\(k,w)-> (k,(w,Nothing))) list
+--instance  Serialize Stat where
+--    showp (Running map)= do
+--          insertString $ B.pack "Running"
+--          showp $ Prelude.map (\(k,(w,_))  -> (k,w)) $ M.toList map
+--
+--
+--    showp  stat@Stat{..} = do
+--                     header stat
+--                     insertChar '\n'
+--                     showp$ Prelude.reverse versions
+--
+--
+--
+--    readp = choice [rStat, rWorkflows] <?> "on reading Workflow State" where
+--        rStat= do
+--              symbol statPrefix1
+--              wfname     <- stringLiteral
+--              state      <- integer >>= return . fromIntegral
+--              let recover  = True
+--              tim        <- parens readp
+--              act        <- readp
+--              references <- readp
+--              versions   <- readp
+--              cont <- getRContext
+--
+--              let self= getDBRef $ keyResource stat0{wfName= wfname}
+--              return $ Stat self wfname   state   recover  tim act
+--                            cont versions
+--
+--
+--        rWorkflows= do
+--               symbol "Running"
+--               list <- readp
+--               return $ Running $ M.fromList $ Prelude.map(\(k,w)-> (k,(w,Nothing))) list
 
 
 
@@ -135,6 +124,8 @@ instance Indexable (WFRef a) where
     key (WFRef n ref)= keyObjDBRef ref++('#':show n)
 
 
+
+
 --instance  Serialize a  => Serializable a  where
 --  serialize = runW . showp
 --  deserialize = runR readp
@@ -143,9 +134,9 @@ pathWFlows=  (defPath (1:: Int)) ++ "Workflow/"
 stFName st = pathWFlows ++ keyResource st
 Persist fr fw fd = defaultPersist
 
---nheader= "/header"
---nlog= "/log"
---ncontext= "/context"
+nheader= "/header"
+nlog= "/log"
+ncontext= "/context"
 
 
 instance IResource Stat where
@@ -154,63 +145,72 @@ instance IResource Stat where
   keyResource (Running _)= keyRunning
 
 
-  readResourceByKey k = fr (pathWFlows ++ k)
-                        >>= return . fmap ( runR  readp)
+  readResourceByKey k
+     | k== keyRunning = fr (pathWFlows ++ k)
+                        >>= return . fmap ( runR  readRunning)
+     | otherwise= do
 
-  delResource st= fd  (stFName st) -- removeFile (stFName st)  `catch`\(e :: IOError) -> return ()
+      let n= pathWFlows ++ k
+      scont<- safe (n++ncontext)   hReadFile
+      mh <-  bracket (openFile (n++nheader) ReadWriteMode)
+                     hClose
+                     (readHeader scont)
+             `catch`\(e :: IOError) -> return Nothing
 
-  writeResource runn@(Running _)=  B.writeFile (stFName runn)  . runW $ showp runn
+      case mh of
+        Nothing -> return Nothing
+        Just (wfName, state, timeout, lastActive,references,cont) -> do
 
+          log <- safe (n++nlog) hReadFile
+          let versions = runRC cont readp  log
+          let self= getDBRef $ keyResource stat0{wfName= wfName}
+          return . Just $
+                   Stat self
+                        wfName   state
+                        True  timeout lastActive
+                        cont  references versions
+    where
+    readRunning= do
+               symbol "Running"
+               list <- readp
+               return $ Running $ M.fromList $ Prelude.map(\(k,w)-> (k,(w,Nothing))) list
+
+
+
+  delResource st= removeDirectoryRecursive (stFName st)  `catch`\(e :: IOError) -> return ()
+
+  writeResource runn@(Running list)=  B.writeFile (stFName runn)  . runW $ showpRunning
+    where
+        showpRunning = do
+          insertString $ B.pack "Running"
+          showp $ Prelude.map (\(k,(w,_))  -> (k,w)) $ M.toList list
 --
-  writeResource stat@Stat{..}
-   | recover = return ()
+  writeResource stat@Stat{..}= do
+    let n= stFName stat
+    written <- safe (n++nheader) getWritten :: IO Int
+    safe (n++nheader) writeHeader
+    safe (n++nlog) $ writeLog written
+    safe (n++ncontext) writeContext
 
-   | refs <- filter (\(n,(_,written))-> not written) references,
-     not $ null refs= do
-          let n= stFName stat
-          st <- readResource  stat !> ("WRITING references " ++ wfName )
-          safe n $ \h ->  do
-            let elems= case st of
-                  Just s@Stat{state=states,versions= verss} -> verss ++  (reverse $ take (state  - states) versions )
-                  Nothing -> reverse versions
-
-            let versions'= substs elems refs
-            hSeek h AbsoluteSeek 0
-            B.hPut h  $ runWC context $ showp  $ stat{versions=reverse versions'}
-
-            writeContext h
-            hTell h >>= hSetFileSize h
-
-   | otherwise= do
-      let n= stFName stat
-      safe n $ \h -> do
-       (seek,written) <- getWritten h
-       writeLog seek written h
 
 
     where
 
     writeHeader h=  B.hPut h  $ runWC context $  header stat
 
-    writeLog seek written h
+    writeLog written h
+        | refs <- filter (\(n,(_,written))-> not written) references,
+          not $ null refs=
+            let versions'= substs versions refs
+            in B.hPut h  $ runWC context $ showp $ reverse  versions'
 
-        | written==0=do
-            hSeek h AbsoluteSeek 0 !> ("WRITING complete " ++ wfName )
-            B.hPut h  . runWC context . showp $ stat
+        | written==0=
+            B.hPut h  $ runWC context $ showp $ reverse  versions
 
-            writeContext h
-            hTell h >>= hSetFileSize h
 
         | otherwise= do
-           hSeek h AbsoluteSeek 0 !> ("WRITING partial " ++ wfName )
-           let s = runWC context $ insertString "\r\n" >> showpe written ( reverse $ take (state - written)   versions)
-           let l= show (seek -3 + B.length s) ++" "++ show state
-           B.hPut h . B.pack $ l ++ take (fromIntegral lenLen - length l - 2) (repeat ' ') ++ "\r\n"
-           hSeek h AbsoluteSeek (fromIntegral seek  - 3)
-           B.hPut h s
-           writeHeader h
-           writeContext h
-           hTell h >>= hSetFileSize h
+           hSeek h SeekFromEnd  (-2)
+           B.hPut h . runWC context $ insertString "\r\n" >> showpe written ( reverse $ take (state - written)   versions)
 
     subst elems (n,( x,_))=
       let
@@ -225,14 +225,13 @@ instance IResource Stat where
 
     getWritten h= do
         size <- hFileSize h
-        if size == 0 then return (0,0)
+        if size == 0 then return 0
           else do
-           s   <- B.hGetNonBlocking h   (fromIntegral lenLen)
-           return $ runR ( return (,) `ap` readp `ap` readp) s
---                seek <- readp
---                written <- readp
---                )  s
-
+           s   <- B.hGetNonBlocking h   (fromIntegral size)
+           return $ runR ( do
+                symbol statPrefix1
+                readp :: STR String
+                readp)  s
 
 
 
@@ -241,6 +240,8 @@ instance IResource Stat where
           rshowp x
           showpe 1 xs
     showpe v (x:l)  = insertString "," >> rshowp x >> showpe v l
+
+      
 
 
 
@@ -275,8 +276,16 @@ readHeader scont  h= do
      if size==0 then return Nothing else do
        s <- B.hGetNonBlocking h (fromIntegral size)
        return . Just $ runR getHeader $ s `B.append` scont
-
-
+     where
+     getHeader= do
+        symbol statPrefix1
+        wfName <- readp
+        state <- readp
+        timeout <- parens readp
+        lastActive <- readp
+        references <- readp
+        c   <- getRContext
+        return  (wfName, state, timeout, lastActive,references,c)
 
 
 keyRunning= "Running"
@@ -298,9 +307,7 @@ showHistory Stat {..}=  runW  sp
             insertString $ B.pack "Workflow name= "
             showp wfName
             insertString $ B.pack "\n"
-            showElem  $ zip [1..]  versions
-            c <- getWContext
-            insertString $ showContext (fst c) True
+            showElem  $ zip [1..] $ Prelude.reverse versions
 
 --    showElem :: [(Int,IDynamic)] -> STW ()
     showElem [] = insertChar '\n'
@@ -308,15 +315,9 @@ showHistory Stat {..}=  runW  sp
          insertString $ B.pack "Step "
          showp (n :: Int)
          insertString $ B.pack ": "
-         showp1  dyn
+         showp  dyn
          insertChar '\n'
          showElem es
-
-showp1 (IDyn r)=
-     case unsafePerformIO $ readIORef r of
-      DRight x  -> showp x
-      DLeft (s, _) -> insertString s
-
 
 
 instance Indexable String where
@@ -330,7 +331,7 @@ instance Indexable Integer where
 
 
 instance Indexable () where
-  key _= "void"
+  key _= "noparam"
 
 wFRefStr = "WFRef"
 

@@ -22,9 +22,10 @@
 
 
 -}
+module Main where
 import Control.Workflow
 
-import Data.Persistent.Queue
+import Data.Persistent.Collection
 import Control.Workflow.Patterns
 
 import Data.Typeable
@@ -32,11 +33,11 @@ import System.Exit
 import Data.List (find)
 import Data.Maybe(fromJust)
 import Control.Monad (when)
-import Control.Concurrent ( forkIO)
+import Control.Concurrent
 import GHC.Conc ( atomically)
 import Data.RefSerialize
 import Data.TCache(syncCache)
-import Data.ByteString.Lazy.Char8(pack)
+import qualified Data.ByteString.Lazy.Char8 as B
 
 import Data.Monoid
 
@@ -53,7 +54,7 @@ instance Indexable Document where
 
 instance Serialize Document where
     showp  (Document title  text)=  do
-       insertString $ pack "Document"
+       insertString $ B.pack "Document"
        showp title
        rshowp text
 
@@ -98,9 +99,11 @@ qrejected = getQRef rejected
 
 
 
+loop= loop
 
 main = do
    -- restart the interrupted document approbal workflows (if necessary)
+   syncWrite SyncManual
 
    restartWorkflows [("docApprobal",docApprobal)]
 
@@ -115,7 +118,7 @@ main = do
      "3" -> aprobal "boss2"
      "4" -> aprobal "superboss1"
      "5" -> aprobal "superboss2"
-
+     _   -> exitWith ExitSuccess
 
 
 bosses= ["boss1", "boss2"]
@@ -147,7 +150,7 @@ if the result is false, the document is added to the persistent list of rejectec
 -}
 
 docApprobal :: Document -> Workflow IO ()
-docApprobal doc =  getWFRef >>= docApprobal1
+docApprobal doc =  newWFRef doc >>= docApprobal1
   where
   -- using a reference instead of the doc itself
   docApprobal1 rdoc=
@@ -168,10 +171,10 @@ docApprobal doc =  getWFRef >>= docApprobal1
     askUser title rdoc user True  =  do
       step $ push (quser user) rdoc
       logWF ("wait for any response from the user: " ++ user)
-      step . pop $ qdocApprobal title
+      step  . pop $ qdocApprobal title
 
 
-    log txt x = logWF txt >> return x
+--    log txt x =  logWF txt >> return x
 
     checkValidated :: Bool -> Workflow IO Bool
     checkValidated  val =
@@ -254,7 +257,7 @@ userMenu= do
      "2" -> modify
      "3" -> view
      "4" -> history
-     _   -> syncCache >> exitSuccess
+     _   -> syncCache >> exitSuccess !> "syncCache"
 
   userMenu
 
@@ -275,7 +278,7 @@ history=  do
    let docproto=  Document{title=  ks !! (n-1), text=undefined}
    case head l of
       'v' -> do
-               getWFHistory  "docApprobal" docproto >>= printHistory  .  fromJust
+               getWFHistory  "docApprobal" docproto >>= B.putStrLn . showHistory  .  fromJust
                history
       'd' -> do
                delWF "docApprobal" docproto
@@ -289,7 +292,8 @@ separator=    putStrLn "------------------------------------------------"
 modify :: IO ()
 modify= do
    separator
-   empty  <-  isEmpty (quser user) :: IO Bool
+   let quseruser= quser user
+   empty  <-  isEmpty (quseruser) :: IO Bool
    if empty then  putStrLn "no more documents to modify\nthanks, enter as  Boss for the  approbal"
       else do
        rdoc <- pick (quser user)
@@ -300,7 +304,7 @@ modify= do
 
       -- return $ diff doc1 doc
        atomically $ do
-            popSTM  (quser user)
+            popSTM  (quseruser)
             pushSTM (qdoc $ title doc) doc1
        modify
 
@@ -350,19 +354,22 @@ aprobal who= do
  separator
  aprobalList
  putStrLn $ "thanks , press any key to exit, "++ who
- getLine
+ threadDelay 10000000
  syncCache
+ threadDelay 1000000
  return ()
  where
+ quserwho= quser who
  aprobalList= do
-     empty <- isEmpty  (quser who)
+     empty <- isEmpty  (quserwho)
      if empty
          then   do
             putStrLn  "No more document to validate. Bye"
+
             return ()
          else do
-             rdoc <- pick  (quser who)
-             syncCache
+             rdoc <- pick  (quserwho)
+
              approbal1 rdoc
              aprobalList
  approbal1 :: WFRef Document -> IO ()
@@ -377,9 +384,9 @@ aprobal who= do
         let res= if b == 's' then  True else  False
            -- send the message to the workflow
         atomically $ do
-                popSTM   (quser who)
+                popSTM   (quserwho)
                 pushSTM  (qdocApprobal  $ title doc)  res
-        syncCache
+
 
 
 

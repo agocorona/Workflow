@@ -1,19 +1,11 @@
 name: Workflow
-version: 0.6.0.0
-cabal-version: -any
+version: 0.7.0.0
+cabal-version: >= 1.2
 build-type: Simple
 license: BSD3
 license-file: LICENSE
-copyright:
 maintainer: agocorona@gmail.com
-build-depends: vector -any, transformers -any,
-               extensible-exceptions -any, MonadCatchIO-mtl -any, monadIO -any,
-               base >=4 && <5, binary -any, bytestring -any, containers -any,
-               RefSerialize >=0.2.8 && <0.3, TCache >=0.9 && <1.0, stm >2,
-               old-time -any, mtl -any
 stability: experimental
-homepage:
-package-url:
 bug-reports: agocorona@gmail.com
 synopsis: library for transparent execution  of interruptible  computations
 description: Transparent support  for interruptible computations. A workflow can be seen as a persistent thread that executes any
@@ -57,43 +49,25 @@ description: Transparent support  for interruptible computations. A workflow can
              * workflow management and monitoring, view workflow history and intermediate results.
 category: Control, Workflow, Concurrent
 author: Alberto Gómez Corona
-tested-with:
-data-files:
 data-dir: ""
-extra-source-files: Demos/docAprobal.hs
-                    Demos/sequence.hs
-                    Demos/Fact.hs
-                    Demos/Inspect.hs
-                    Demos/pr.hs
-extra-tmp-files:
-exposed-modules: Control.Workflow.Configuration
-                 Control.Workflow
-                 Control.Workflow.Patterns
-                 Data.Persistent.Queue
-exposed: True
-buildable: True
-build-tools:
-cpp-options:
-cc-options:
-ld-options:
-pkgconfig-depends:
-frameworks:
-c-sources:
-default-language:
-other-languages:
-default-extensions:
-other-extensions:
-extensions:
-extra-libraries:
-extra-lib-dirs:
-includes:
-install-includes:
-include-dirs:
-hs-source-dirs: .
-other-modules: Control.Workflow.IDynamic Control.Workflow.Stat
-ghc-prof-options:
-ghc-shared-options:
-ghc-options:
-hugs-options:
-nhc98-options:
-jhc-options:
+extra-source-files: Demos/Fact.hs Demos/Inspect.hs
+                    Demos/docAprobal.hs Demos/pr.hs Demos/sequence.hs
+
+library
+    build-depends: MonadCatchIO-mtl -any, RefSerialize >=0.2.8 && <0.3,
+                   TCache -any && <1.0, base >=4 && <5, binary -any, bytestring -any,
+                   containers -any, directory -any, extensible-exceptions -any,
+                    mtl -any, old-time -any, stm >2, monadIO -any
+
+    exposed-modules: Control.Workflow
+                     Control.Workflow.Configuration
+                     Control.Workflow.Patterns
+    exposed: True
+    buildable: True
+    extensions: OverlappingInstances UndecidableInstances
+                MultiParamTypeClasses ExistentialQuantification
+                TypeSynonymInstances RecordWildCards DeriveDataTypeable
+    hs-source-dirs: .
+    other-modules: Control.Workflow.Stat Control.Workflow.Stat
+                   Control.Workflow.IDynamic
+

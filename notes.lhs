@@ -1,3 +1,6 @@
+como se propagan las refeencias de estar en recovery a no estarlo.
+
+
 
 data Status a = Active | Killed | Finished | Returned a deriving (Eq,Typeable)
 data SpawnWF a= Spawned{name :: String, status :: Status a} deriving (Eq,Typeable)

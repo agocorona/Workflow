@@ -1,4 +1,4 @@
-{-# OPTIONS -XExistentialQuantification
+    {-# OPTIONS -XExistentialQuantification
             -XOverlappingInstances
             -XUndecidableInstances
             -XScopedTypeVariables
@@ -19,9 +19,9 @@ import Data.Typeable
 import Unsafe.Coerce
 import System.IO.Unsafe
 import Data.TCache
-import Data.TCache.DefaultPersistence
+import Data.TCache.Defs
 import Data.RefSerialize
-
+import Data.Char (showLitChar)
 
 import Data.ByteString.Lazy.Char8 as B
 
@@ -48,58 +48,19 @@ data IDynType= forall a w r.(Typeable a, Serialize a)
 
                deriving Typeable
 
-{-
-class (Monad writerm , Monad readerm)
-       => Serializer writerm readerm   a
-       | a -> writerm readerm   where
-  serial     :: a -> writerm ()
-  deserial   :: readerm a
-  fromString :: ByteString -> a
-  toString :: a -> ByteString
+newtype Save= Save ByteString deriving Typeable
 
-  serialM   :: a -> writerm ByteString
-  serialM = return . toString
-
-  fromDynData :: ByteString ->(Context, ByteString) ->  a
-  fromDynData s _= fromString s
-
-  dGetContext :: a -> readerm (Context, ByteString)
-  dGetContext _ = return (M.empty,"")
+tosave d@(IDyn r)= unsafePerformIO $ do
+   mr<- readIORef r
+   case mr of
+     DRight _ ->  return d
+     DLeft (s,_) -> writeIORef r (DRight $ Save s) >> return d
 
 
-class (Serializer w r a, Serializer w' r' b) => TwoSerializer w r w' r' a b
+instance Serialize Save  where
+  showp (Save s)= insertString s
+  readp = error "readp not impremented for Save"
 
-
-instance (Serializer w r a, Serializer w' r' b) => TwoSerializer w r w' r' a b
--}
-{-
-  symbols :: (Show symbolType, Eq symbolType)=> [symbolType]
-  symbols= []
-
-
-instance  (Serializer m n s Int, Serializer m n s a) => Serializer m n s [a] where
-   serial xs= serial (Prelude.length xs) >> mapM_ serial xs
-   deserial = do
-     n <- deserial
-     replicateM n deserial
-
-instance Binary a => Serializer PutM Get a where
-  serial = put
-  deserial = get
-
-
-
-
-choices :: (Serializer writerm readerm c symbolType
-           , Serializer writerm readerm symbolType a)
-           =>[(symbolType, readerm a)] -> readerm a
-choices l=  do
-  n <- deserial
-  case lookup n l of
-    Just f -> f
-    Nothing -> error $ "case "++ show n ++ "not in choice"
-
--}
 
 errorfied str str2= error $ str ++ ": IDynamic object not reified: "++ str2
 
@@ -107,61 +68,7 @@ errorfied str str2= error $ str ++ ": IDynamic object not reified: "++ str2
 
 dynPrefix= "Dyn"
 dynPrefixSp= append  (pack dynPrefix) " "
-
-{-
-instance Serialize IDynamic where
-   showp (IDyn x)= do
-      showpx <- showp x
-      len <- showpText . fromIntegral $ B.length showpx
-      return $ dynPrefixSp `append` len `append` " " `append` showpx
-
-   showp (IDyns showpx)= do
-      len <- showpText  $  B.length showpx
-      return $ dynPrefixSp `append` len `append` " " `append` showpx
-   readp = do
-      symbol dynPrefix
-      n <- readpText
-      s <- takep n
-      c <- getContext
-      return $ IDyns $ s `append` "*where*" `append` c
-
-
-instance Binary IDynamic where
-   put (IDyn x) =  put $! toString x
-   put (IDyns s) =   put s
-
-   get =  do
-     s <- get
-     return $ IDyns  s
-
-
-
-instance (Serializer w r  ByteString) => Serializer w r  IDynamic where
-   serial (IDyn r)=
-        let t= unsafePerformIO $ readIORef r
-        in case t of
-
-         DRight x -> do
-           s <- unsafeCoerce $ serialM x  -- thatś why Binary and Text versions fo workflow can not be mixed
-           serial $! (s :: ByteString)
-         DLeft (s , _) -> serial s
-
-   deserial =  do
-       s <- deserial
-       c <- dGetContext (undefined :: IDynamic)
-       return $ IDyn  $! ref s c
-       where
-       ref s c= unsafePerformIO . newIORef $ DLeft (s,c)
-
-   toString (IDyn r)=
-       let t= unsafePerformIO $ readIORef r
-       in case t of
-          DRight x -> toString x
-          DLeft (s, _) ->  s
-
-   fromString s= IDyn . unsafePerformIO . newIORef $ DLeft (s,(M.empty,""))
-
--}
+notreified = pack $ dynPrefix ++" 0"
 
 
 
@@ -170,26 +77,27 @@ instance Serialize IDynamic where
    showp (IDyn t)=
     case unsafePerformIO $ readIORef t of
      DRight x -> do
-          insertString $ pack dynPrefix
-          showpx <-   showps x
-          showpText . fromIntegral $ B.length showpx
-          insertString showpx
+--          insertString $ pack dynPrefix
+          c <- getWContext
+          showpx  <-  rshowps x
+--          showpText . fromIntegral $ B.length showpx
+          showp $ unpack showpx
 
+     DLeft (showpx,_) ->   --  error $ "IDynamic not reified :: "++  unpack showpx
+--        insertString   notreified
+          insertString  $ encode showpx
+            where
+            encode =   pack . show . unpack
 
+   readp = lexeme (do
+--      symbol dynPrefix
+--      n <- readpText
+--      s <- takep n
 
+      s <- rreadp :: STR  String
 
-     DLeft (showpx,_) -> do  --  error $ "IDynamic not reified :: "++  unpack showpx
-        insertString  $ pack dynPrefix
-        showpText 0
-
-   readp = do
-      symbol dynPrefix
-      n <- readpText
-      s <- takep n
-
-
-      c <- getContext
-      return . IDyn . unsafePerformIO . newIORef $ DLeft ( s, c)
+      c <- getRContext
+      return . IDyn . unsafePerformIO . newIORef $ DLeft ( pack s, c))
       <?> "IDynamic"
 
 
@@ -198,8 +106,8 @@ instance Show  IDynamic where
  show (IDyn r) =
     let t= unsafePerformIO $ readIORef r
     in case t of
-      DRight x -> "IDyn " ++  ( unpack . runW $ showp  x)  ++ ")"   
-      DLeft (s, _) ->  "IDyn " ++ unpack s
+      DRight x -> "IDyn (" ++  ( unpack . runW $ showp  x)  ++ ")"   
+      DLeft (s, _) ->  "IDyns " ++ unpack s
 
 
 
@@ -226,11 +134,14 @@ safeFromIDyn (IDyn r)=unsafePerformIO $ do
    DLeft (str, c) ->
     handle (\(e :: SomeException) ->  return Nothing) $  -- !> ("safeFromIDyn : "++ show e)) $
         do
-          let v= runRC  c readp str
+          let v= runRC  c rreadp str
           writeIORef r $! DRight v -- !> ("***reified "++ unpack str)
           return $! Just v -- !>  ("*** end reified " ++ unpack str)
 
 
 --main= print (safeFromIDyn $ IDyn $ unsafePerformIO $ newIORef $ DLeft $ (pack "1", (unsafePerformIO $ HT.new (==) HT.hashInt, pack "")) :: Maybe Int)
 
-
+reifyM :: (Typeable a,Serialize a) => IDynamic -> a -> IO a
+reifyM dyn v = do
+   let v'= fromIDyn dyn
+   return $ v' `seq` v'
