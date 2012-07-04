@@ -80,6 +80,7 @@ module Control.Workflow
 , WorkflowList
 , PMonadTrans (..)
 , MonadCatchIO (..)
+, HasFork(..)
 , throw
 , Indexable(..)
 -- * Start/restart workflows
@@ -146,7 +147,7 @@ import Prelude hiding (catch)
 import System.IO.Unsafe
 import Control.Monad(when,liftM)
 import qualified Control.Exception as CE (Exception,AsyncException(ThreadKilled), SomeException, ErrorCall, throwIO, handle,finally,catch,block,unblock)
-import Control.Concurrent (forkIO,threadDelay, ThreadId, myThreadId, killThread)
+import Control.Concurrent -- (forkIO,threadDelay, ThreadId, myThreadId, killThread)
 import Control.Concurrent.STM
 import GHC.Conc(unsafeIOToSTM)
 import GHC.Base (maxInt)
@@ -158,7 +159,7 @@ import Data.List as L
 import Data.Typeable
 import System.Time
 import Control.Monad.Trans
-import Control.Concurrent.MonadIO(HasFork(..),MVar,newMVar,takeMVar,putMVar,readMVar)
+--import Control.Concurrent.MonadIO(HasFork(..),MVar,newMVar,takeMVar,putMVar,readMVar)
 
 
 import System.IO(hPutStrLn, stderr)
@@ -303,7 +304,11 @@ data WFInfo= WFInfo{ name :: String
                       , haserror ::  Maybe WFErrors }
                       deriving  (Typeable,Read, Show)
 
+class MonadIO io => HasFork io where
+  fork :: io () -> io ThreadId
 
+instance HasFork IO where
+  fork= forkIO
 
 instance  (HasFork io, MonadIO io
           , CMC.MonadCatchIO io)

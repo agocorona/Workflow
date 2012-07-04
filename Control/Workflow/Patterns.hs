@@ -75,13 +75,16 @@ vote, sumUp, Select(..)
 ) where
 import Control.Concurrent.STM
 import Data.Monoid
-import Control.Concurrent.MonadIO
+
 import qualified Control.Monad.CatchIO as CMC
+
 import Control.Workflow.Stat
 import Control.Workflow
 import Data.Typeable
 import Prelude hiding (catch)
 import Control.Monad
+import Control.Monad.Trans
+import Control.Concurrent
 import Control.Exception.Extensible (Exception,SomeException)
 import Data.RefSerialize
 import Control.Workflow.Stat
@@ -160,11 +163,11 @@ select ::
          -> [ActionWF a]
          -> Workflow io [a]
 select timeout check actions=   do
- res  <- newMVar []
+ res  <- liftIO $ newMVar []
  flag <- getTimeoutFlag timeout
- parent <- myThreadId
- checThreads <- newEmptyMVar
- count <- newMVar 1
+ parent <- liftIO myThreadId
+ checThreads <- liftIO $ newEmptyMVar
+ count <- liftIO $ newMVar 1
  let process = do
         let check'  (ActionWF ac ) =  do
                r <- readWFRef1 ac
@@ -173,25 +176,25 @@ select timeout check actions=   do
                   Discard -> return ()
                   Select  -> addRes r
                   FinishDiscard -> do
-                       throwTo parent FinishDiscard
+                       liftIO $ throwTo parent FinishDiscard
                   FinishSelect -> do
                        addRes r
-                       throwTo parent FinishDiscard
+                       liftIO $ throwTo parent FinishDiscard
 
-               n <- CMC.block $ do
+               n <- liftIO $ CMC.block $ do
                      n <- takeMVar count
                      putMVar count (n+1)
                      return n      !> ("SELECT" ++ show n)
 
                if ( n == length actions)
-                     then throwTo parent FinishDiscard
+                     then liftIO $ throwTo parent FinishDiscard
                      else return ()
 
-              `CMC.catch` (\(e :: Select) -> throwTo parent e)
+              `CMC.catch` (\(e :: Select) -> liftIO $ throwTo parent e)
 
 
         ws <- mapM ( fork . check') actions
-        putMVar checThreads  ws
+        liftIO $ putMVar checThreads  ws
 
         liftIO $ atomically $ do
            v <- readTVar flag -- wait fo timeout
@@ -201,17 +204,17 @@ select timeout check actions=   do
         throw FinishDiscard
         where
 
-        addRes r=  CMC.block $ do
+        addRes r=  liftIO $ CMC.block $  do
             l <- takeMVar  res
             putMVar  res $ r : l
 
- let killall  = do
+ let killall  = liftIO $ do
        ws <- readMVar checThreads
        liftIO $ mapM_ killThread ws !> "KILLALL"
 
  step $ CMC.catch   process -- (WF $ \s -> process >>= \ r -> return (s, r))
               (\(e :: Select)-> do
-                 readMVar res
+                 liftIO $ readMVar res
                  )
        `CMC.finally`   killall
 
