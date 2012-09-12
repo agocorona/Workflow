@@ -1,24 +1,11 @@
------------------------------------------------------------------------------
---
--- Module      :  Control.Workflow.Configuration
--- Copyright   :
--- License     :  BSD3
---
--- Maintainer  :  agocorona@gmail.com
--- Stability   :  experimental
--- Portability :
---
--- |
---
------------------------------------------------------------------------------
-{- Helpers for application initialization
 
 
--}
 
 {-# OPTIONS
              -XScopedTypeVariables
 #-}
+
+{- | Helpers for application initialization -}
 
 module Control.Workflow.Configuration (once, ever, runConfiguration
 
@@ -35,10 +22,11 @@ import Control.Exception
 ever:: (Typeable a,Serialize a, MonadIO m) => IO a -> Workflow m a
 ever=  unsafeIOtoWF
 
--- | to execute one computation once
+-- | to execute one computation once . It executes at the first run only
 once :: (Typeable a,Serialize a, MonadIO m) => m a -> Workflow m a
 once= step
 
+-- | executes a computation with `once` and `ever` statements
 runConfiguration confname confProc =  handle (\(e :: SomeException) -> return ())
     $ exec1 confname $ do
        confProc

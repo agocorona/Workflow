@@ -35,9 +35,9 @@ import System.Directory
 import Data.List
 import Control.Monad
 
-import Debug.Trace
-
-(!>) a b= a -- flip trace
+--import Debug.Trace
+--
+--(!>) =  flip trace
 
 data WF  s m l = WF { st :: s -> m (s,l) }
 
@@ -124,7 +124,7 @@ instance  Serialize Stat where
 
 
 
--- return the unique name of a workflow with a parameter (executed with exec or start)
+-- | Return the unique name of a workflow with a parameter (executed with exec or start)
 keyWF :: Indexable a => String -> a -> String
 keyWF wn x= wn ++ "/" ++ key x
 
@@ -168,7 +168,7 @@ instance IResource Stat where
    | refs <- filter (\(n,(_,written))-> not written) references,
      not $ null refs= do
           let n= stFName stat
-          st <- readResource  stat !> ("WRITING references " ++ wfName )
+          st <- readResource  stat               -- !> ("WRITING references " ++ wfName )
           safe n $ \h ->  do
             let elems= case st of
                   Just s@Stat{state=states,versions= verss} -> verss ++  (reverse $ take (state  - states) versions )
@@ -195,14 +195,14 @@ instance IResource Stat where
     writeLog seek written h
 
         | written==0=do
-            hSeek h AbsoluteSeek 0 !> ("WRITING complete " ++ wfName )
+            hSeek h AbsoluteSeek 0              -- !> ("WRITING complete " ++ wfName )
             B.hPut h  . runWC context . showp $ stat
 
             writeContext h
             hTell h >>= hSetFileSize h
 
         | otherwise= do
-           hSeek h AbsoluteSeek 0 !> ("WRITING partial " ++ wfName )
+           hSeek h AbsoluteSeek 0                -- !> ("WRITING partial " ++ wfName )
            let s = runWC context $ insertString "\r\n" >> showpe written ( reverse $ take (state - written)   versions)
            let l= show (seek -3 + B.length s) ++" "++ show state
            B.hPut h . B.pack $ l ++ take (fromIntegral lenLen - length l - 2) (repeat ' ') ++ "\r\n"

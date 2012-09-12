@@ -24,10 +24,12 @@ There is a timeout of seven days. The result of the users that voted is summed
 up according with the same monoid instance
 
 if the result is true the document is added to the persistent list of approbed documents
-if the result is false, the document is added to the persistent list of rejectec documents (checlkValidated1)
+if the result is false, the document is added to the persistent list of rejectec documents (@checlkValidated1@)
 
 The program can be interrupted at any moment. The Workflow monad will restartWorkflows
 it at the point where it was interrupted.
+
+This example uses queues from "Data.Persistent.Queue"
 
 @docApprobal :: Document -> Workflow IO ()
 docApprobal doc =  `getWFRef` \>>= docApprobal1
@@ -46,7 +48,7 @@ docApprobal1 rdoc=
 askUser _ _ user False = return False
 askUser doc rdoc user  True =  do
       `step` $ `push` (quser user) rdoc
-      `logWF` ("wait for any response from the user: " ++ user)
+      `logWF` (\"wait for any response from the user: \" ++ user)
       `step` . `pop` $ qdocApprobal (title doc)
 
 log txt x = `logWF` txt >> return x
@@ -184,7 +186,7 @@ select timeout check actions=   do
                n <- liftIO $ CMC.block $ do
                      n <- takeMVar count
                      putMVar count (n+1)
-                     return n      !> ("SELECT" ++ show n)
+                     return n                   -- !> ("SELECT" ++ show n)
 
                if ( n == length actions)
                      then liftIO $ throwTo parent FinishDiscard
@@ -210,7 +212,7 @@ select timeout check actions=   do
 
  let killall  = liftIO $ do
        ws <- readMVar checThreads
-       liftIO $ mapM_ killThread ws !> "KILLALL"
+       liftIO $ mapM_ killThread ws                 -- !> "KILLALL"
 
  step $ CMC.catch   process -- (WF $ \s -> process >>= \ r -> return (s, r))
               (\(e :: Select)-> do
@@ -268,7 +270,7 @@ main= do
   r <- exec1 "sumup" $ sumUp 0 [f 1, f 2] "0"
   print r
 
-  `CMC.catch` \(e::SomeException) -> syncCache !> "syncCache"
+  `CMC.catch` \(e::SomeException) -> syncCache       --  !> "syncCache"
 
 
 f :: Int -> String -> Workflow IO String

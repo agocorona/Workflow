@@ -1,57 +1,36 @@
 name: Workflow
 version: 0.7.0.0
-cabal-version: >= 1.2
+cabal-version: >= 1.6
 build-type: Simple
 license: BSD3
 license-file: LICENSE
 maintainer: agocorona@gmail.com
 stability: experimental
 bug-reports: agocorona@gmail.com
-synopsis: library for transparent execution  of interruptible  computations
+synopsis:    Monadic transformer for persistence in threads. and workflow patterns
 description: Transparent support  for interruptible computations. A workflow can be seen as a persistent thread that executes any
              monadic computation. Therefore, it can be used in very time consuming computations such are CPU intensive calculations
              or procedures that are most of the time waiting for the action of a process or an user, that are prone to comunication
-             failures, timeouts or shutdowns.
+             failures, timeouts or shutdowns. It also can be used if you like to restart your
+             program at the point where the user left it last time.
              .
-             The computantion can be restarted at the interrupted point thanks to its logged state in permanent storage.
+             The computation can be restarted at the interrupted point thanks to its logged state in permanent storage.
              Besides that, the package also provides other services associated to workflows
              .
-             New in this release,
+             This release inprove the logging/recovery process in workflows with with many steps
              .
-             * 0.6.0.0 Changes in ghc 7.4 forces to drop the abstract serializer
-             now Text and  binary versions are the same.
-             For binary serialization, use 'showBinary' and 'readpBinary'
-             .
-             * 0.5.8.2 minor changes for the MFlow package
-             .
-             * 0.5.8.1 solved a bug that caused a "casting failure"
-             .
-             * 0.5.8:
-             .
-             *registerType is no longer needed
-             .
-             * Configurable state persistence (for example, in databases) . Default in files
-             .
-             * Added Data.Binary  serialization (Use `Control.Workflow.Binary`) besides Text serialization  (`Control.Wokflow.Text`)
-             .
-             * New simpler and more intuitive workflow  primitives with excepion handling
-             .
-             * Instances of classes in Control.Concurrent.MonadIO, MonadCatchIO
-             .
-             * An EDSL of workflow patterns. To express  bifurcations, confluences, timeouts etc
-             .
-             * References to  workflow objects, that can be accessed externally: WFRef's
-             .
-             Previous versions:
-             .
-             * Persisten communications facilities trough persistent data objects, inspection of workflow states ,  persistent  queues, persistent timeouts and, new in this release, References to internal workflow objects WFRef's
-             .
-             * workflow management and monitoring, view workflow history and intermediate results.
-category: Control, Workflow, Concurrent
+             See "Control.Workflow" for details
+
+category: Control, Workflow
+
 author: Alberto Gómez Corona
+
 data-dir: ""
+
 extra-source-files: Demos/Fact.hs Demos/Inspect.hs
                     Demos/docAprobal.hs Demos/pr.hs Demos/sequence.hs
+
+
 
 library
     build-depends: MonadCatchIO-mtl -any, RefSerialize >=0.2.8 && <0.3,
@@ -71,3 +50,6 @@ library
     other-modules: Control.Workflow.Stat Control.Workflow.Stat
                    Control.Workflow.IDynamic
 
+source-repository head
+  type : git
+  location: https://github.com/agocorona/Workflow

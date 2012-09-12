@@ -1,4 +1,7 @@
-como se propagan las refeencias de estar en recovery a no estarlo.
+que ocurre cuando se reinicia un workflow y estaba interrumpido con lo que estaba en memoria
+  hay que
+    syncCache
+    flush key
 
 
 
