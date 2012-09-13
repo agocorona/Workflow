@@ -1,19 +1,41 @@
-TCache is a transactional cache written in Haskell, with configurable persistence. It allows conventional STM transactions for objects that syncronize with their user defined storages. Default persistence in files is provided for testing purposes State in memory and into permanent storage is transactionally coherent. 0.9.0.4 : solved a bug in the management of weak pointers that evaporated registers from the cache 0.9.0.3 : Solved a lost registers bug. 0.9.0.1 : Solves a bug when object keys generate invalid filenames. changes in defaultPersistence to further separate serialization from input-output
+A workflow can be seen as a persistent thread. The workflow monad writes a log that permit to restore the thread at the interrupted point. step is the (partial) monad transformer for the Workflow monad. A workflow is defined by its name and, optionally by the key of the single parameter passed. There primitives for starting workflows also restart the interrupted workflow when it has been in execution previously.
 
-0.9: This version now has full text search. Serialization is now trough byteStrings
+A small example that print the sequence of integers in te console if you interrupt the progam, when restarted again, it will start from the last printed number
 
-This version support the backward compatible stuff, that permits transparent retrievals of objects and transcactions between objects without directly using STM references ('with*Resource(s)' calls), Now it goes in the oposite direction by providing explicit STM persistent references (called 'DBRefś') that leverage the nice and traditional haskell reference syntax for performing database transactions.
+module Main where
+import Control.Workflow
+import Control.Concurrent(threadDelay)
+import System.IO (hFlush,stdout)
 
-DBRefs are in essence, persistent TVars indexed in the cache, with a traditional readDBRef, writeDBRef Haskell interface in the STM monad. Additionally, because DBRefs are serializable, they can be embeded in serializable registers. Because they are references,they point to other serializable registers. This permits persistent mutable and efficient Inter-object relations.
+mcount n= do step $  do
+                       putStr (show n ++ " ")
+                       hFlush stdout
+                       threadDelay 1000000
+             mcount (n+1)
+             return () -- to disambiguate the return type
 
-Triggers are also included in this release. They are user defined hooks that are called back on register updates. That can be used for easing the actualization of inter-object relations and also permit more higuer level and customizable accesses. The internal indexes used for the query language uses triggers.
+main= exec1  "count"  $ mcount (0 :: Int)
+>>> runghc demos\sequence.hs
+>0 1 2 3
+>CTRL-C Pressed
+>>> runghc demos\sequence.hs
+>3 4 5 6 7
+>CTRL-C Pressed
+>>> runghc demos\sequence.hs
+>7 8 9 10 11
+...
+The program restart at the last saved step.
 
-It also implements an straighforwards non-intrusive pure-haskell type safe query language based on register field relations. This module must be imported separately. See Data.TCache.IndexQuery for further information
+As you can see, some side effect can be re-executed after recovery if the log is not complete. This may happen after an unexpected shutdown (in this case) or due to an asynchronous log writing policy. (see syncWrite)
 
-Now the file persistence is more reliable.The IO reads are safe inside STM transactions.
+When the step results are big and complex, use the Data.RefSerialize package to define the (de)serialization instances The log size will be reduced. printWFHistory` method will print the structure changes in each step.
 
-To ease the implementation of other user-defined persistence, Data.TCache.DefaultPersistence needed to be imported explcitly for deriving file persistence instances.
+If instead of RefSerialize, you use read and show instances, there will be no reduction. but still it will work, and the log will be readable for debugging purposes. The RefSerialize istance is automatically derived from Read, Show instances.
 
-The 0.9 version adds full text indexation and search, incorporated in the experimental query language
+Data.Binary instances are also fine for serialization. To use Binary, just define a binary instance of your data by using showpBinary and readpBinary.
 
-It also changes the default Persistence mechanism. Now ByteStrings are used for serialization and deserialization . a Serializable class and a Persist structure decouple serialization to/from bytestring and write-read to file. Both can be redefined separately, so default persistence can be changed with setPersist to write to blobs in databases, for example. Default persistence has'nt to be in files.
+Within the RefSerialize instance of a structure, you can freely mix Show,Read RefSerialize and Data Binary instances.
+
+Control.Workflow.Patterns contains higuer level workflow patters of multiuser workflows
+
+Control.Workflow.Configuration permits the use of workflows for configuration purposes
