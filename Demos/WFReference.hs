@@ -12,11 +12,10 @@ import qualified Data.ByteString.Lazy.Char8 as B
 main= do
 
    refs <- exec1 "WFRef" $ do
-                 step $ return (1 :: Int)
-                 ref <- newWFRef  "bye initial valoe"
-                 step $ return (3 :: Int)
-
-                 return ref
+             step $ return (1 :: Int)
+             ref <- newWFRef  "bye initial valoe"
+             step $ return (3 :: Int)
+             return ref
 
    atomically $ writeWFRef refs "hi final value"
    s <- atomically $   readWFRef refs
@@ -25,7 +24,8 @@ main= do
    B.putStrLn $ showHistory stat
    syncCache
    atomically flushAll
-   Just stat <- getWFHistory "WFRef" ()
+
+   stat<- getWFHistory "WFRef" () `onNothing` error "stat not found"
    B.putStrLn $ showHistory stat
    s <- atomically $   readWFRef refs
    print s

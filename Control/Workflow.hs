@@ -93,6 +93,7 @@ module Control.Workflow
 , exec
 , exec1d
 , exec1
+, exec1nc
 , wfExec
 , startWF
 , restartWorkflows
@@ -112,7 +113,7 @@ module Control.Workflow
 -- * State manipulation
 , writeWFRef
 , moveState
--- * Workflow inspect
+-- * Workflow inspection
 , waitWFActive
 , getAll
 --, getStep
@@ -341,7 +342,7 @@ instance  (HasFork io, MonadIO io
 --  Its state is deleted when finished and the result is stored in
 --  the parent's WF state.
 wfExec
-  :: (Indexable a, Serialize a, Typeable a
+  :: (Serialize a, Typeable a
   ,  CMC.MonadCatchIO m, MonadIO m)
   => Workflow m a -> Workflow m  a
 wfExec f= do
@@ -349,8 +350,7 @@ wfExec f= do
       step $ exec1 str f
 
 -- | A version of exec1 that deletes its state after complete execution or thread killed
-exec1d :: (Serialize b, Typeable b
-          ,MonadIO m, CMC.MonadCatchIO m)
+exec1d :: (MonadIO m, CMC.MonadCatchIO m)
           => String ->  (Workflow m b) ->  m  b
 exec1d str f= do
    r <- exec1 str  f
@@ -366,8 +366,7 @@ exec1d str f= do
 
 
 -- | A version of exec with no seed parameter.
-exec1 ::  ( Serialize a, Typeable a
-          , Monad m, MonadIO m, CMC.MonadCatchIO m)
+exec1 ::  ( Monad m, MonadIO m, CMC.MonadCatchIO m)
           => String ->  Workflow m a ->   m  a
 
 exec1 str f=  exec str (const f) ()
@@ -378,8 +377,7 @@ exec1 str f=  exec str (const f) ()
 -- | Start or continue a workflow with exception handling
 --  the workflow flags are updated even in case of exception
 --  `WFerrors` are raised as exceptions
-exec :: ( Indexable a, Serialize a, Serialize b, Typeable a
-        , Typeable b
+exec :: ( Indexable a, Serialize a,  Typeable a
         , Monad m, MonadIO m, CMC.MonadCatchIO m)
           => String ->  (a -> Workflow m b) -> a ->  m  b
 exec str f x =
@@ -397,8 +395,25 @@ exec str f x =
 
              CMC.throw e )
 
+-- | executes a workflow, but does not mark it as finished even if
+-- the process ended.
+-- The workflow will return the las result.
+exec1nc ::  (  Monad m, MonadIO m, CMC.MonadCatchIO m)
+          => String ->  Workflow m a ->   m  a
+exec1nc str f  =
+       (do
+            v <- getState str f ()
+            case v of
+              Right (name, f, stat) -> do
+                 r <- runWF1 name f  stat False
+                 return  r
+              Left err -> CMC.throw err)
+     `CMC.catch`
+       (\(e :: CE.SomeException) -> liftIO $ do
+             let name=  keyWF str ()
+             clearRunningFlag name  --`debug` ("exception"++ show e)
 
-
+             CMC.throw e )
 
 mv :: MVar Int
 mv= unsafePerformIO $ newMVar 0
@@ -554,9 +569,8 @@ start
     :: ( CMC.MonadCatchIO m
        , MonadIO m
        , Indexable a
-       , Serialize a, Serialize b
-       , Typeable a
-       , Typeable b)
+       , Serialize a
+       , Typeable a)
     => String                        -- ^ name thar identifies the workflow.
     -> (a -> Workflow m b)           -- ^ workflow to execute
     -> a                             -- ^ initial value (ever use the initial value for restarting the workflow)
@@ -577,6 +591,7 @@ start namewf f1 v =  do
                  let name=  keyWF namewf v
                  clearRunningFlag name
                  return . Left $ WFException $ show e )
+
 
 
 -- | Return conditions from the invocation of start/restart primitives
@@ -644,9 +659,15 @@ getState  namewf f v= liftIO . atomically $ getStateSTM
                    mst <- readDBRef sref
                    stat' <- case mst of
                           Nothing -> error $ "getState: Workflow not found: "++ key
-                          Just s -> do
+                          Just s' -> do
                              -- the thread may have been killed by an exception when running
-                             when(not $ recover  s) $ error ("flow "++key++ "found in a wrong state: report it")
+                             s <- case recover  s' of
+                                 True -> return s'
+                                 False -> do
+                                   s'' <- safeIOToSTM $ readResource s' `onNothing` return stat1
+                                   let i= state s''
+                                       j= state s'
+                                   return s'{versions= versions s'' ++ L.reverse ( L.take ( j - i) $ versions s')}
                              if isJust (timeout s)
                               then do
                                   tnow <- unsafeIOToSTM getTimeSeconds
@@ -668,12 +689,16 @@ getState  namewf f v= liftIO . atomically $ getStateSTM
 
 
 
-runWF :: (Monad m,MonadIO m
-         , Serialize b, Typeable b)
-         =>  String ->  Workflow m b -> Stat  -> m  b
-runWF n f s= do
+runWF :: ( Monad m, MonadIO m)
+         =>  String ->  Workflow m b -> Stat   -> m  b
+runWF n f s = runWF1 n f s True
+
+
+
+runWF1 n f s clear=  do
    (s', v')  <-  st f s{versions= L.tail $ versions s} -- !> (show $ versions s)
-   liftIO $! clearFromRunningList n
+   liftIO $ if clear then clearFromRunningList n
+                     else clearRunningFlag n >> return ()
    return  v'
    where
 
@@ -681,7 +706,7 @@ runWF n f s= do
    clearFromRunningList n = atomicallySync $ do
       Just(Running map) <-  readDBRef tvRunningWfs           -- !> "clearFormRunning"
       writeDBRef tvRunningWfs . Running $ M.delete   n   map -- `debug` "clearFromRunningList"
-      flushDBRef (getDBRef n ::  DBRef Stat)
+--      flushDBRef (getDBRef n ::  DBRef Stat)
 -- | Start or continue a workflow  from a list of workflows  with exception handling.
 --  see 'start' for details about exception and error handling
 startWF
@@ -782,7 +807,7 @@ delWFHistory1 name  = do
 --           moveFile (defPath proto ++ key proto)  (defPath proto ++ fromJust mdir)
       atomically . withSTMResources [] $ const resources{  toDelete= [proto] }
 
-
+-- | wait until the workflow is restarted
 waitWFActive wf= do
       r <- threadWF wf
       case r of        -- wait for change in the wofkflow state
@@ -867,43 +892,18 @@ clearRunningFlag name= liftIO $ atomically $ do
     Just(_, Nothing) -> return (map,Nothing)
     Just(v, Just th) -> do
       writeDBRef tvRunningWfs . Running $ M.insert name (v, Nothing) map
-      flushDBRef (getDBRef $ keyResource stat0{wfName=name} ::  DBRef Stat)
+--      flushDBRef (getDBRef $ keyResource stat0{wfName=name} ::  DBRef Stat)
       return (map,Just th)
     Nothing  ->
       return (map, Nothing)
 
 
--- | Return the reference to the last logged result , usually, the last result stored by `step`.
--- wiorkflow references can be accessed outside of the workflow
--- . They also can be (de)serialized.
---
--- WARNING getWFRef can produce  casting errors  when the type demanded
--- do not match the serialized data. Instead,  `newDBRef` and `stepWFRef` are type safe at runtuime.
---getWFRef ::  ( Monad m,
---               MonadIO m,
---               Serialize a
---             , Typeable a)
---             => Workflow m  (WFRef a)
---getWFRef =ret !> "geWFRef"
---   where
---   ret=   WF (\s -> do
---       let  n= if recover s then state s - (L.length $ versions s)
---                            else (state s -1)
---       let  ref = WFRef n (self s)
---       -- to reify the object being accessed
---       -- if not reified, the serializer will write a null object
---       let versionss= versions s
---       when ( L.null versionss) $  error "getWFRef: empty log, no step to point to"
---       let r= fromIDyn (L.head $ versionss) `asTypeOf` typeofRef ret
---       r `seq` return  (s,ref))
---       where
---       typeofRef :: Workflow m  (WFRef a) -> a
---       typeofRef= undefined -- never will be executed
 
 
--- | Log a value and return a reference to it.
+
+-- | Log a value in the workflow log and return a reference to it.
 --
--- @newWFRef x= `step` $ return x >>= `getWFRef`@
+-- @newWFRef x= `stepWFRef` (return  x) >>= return . fst@
 newWFRef :: ( Serialize a
            , Typeable a
            , MonadIO m
@@ -1063,7 +1063,7 @@ logWF str=do
 waitForData :: (IResource a,  Typeable a)
               => (a -> Bool)                   -- ^ The condition that the retrieved object must meet
             -> a                             -- ^ a partially defined object for which keyResource can be extracted
-            -> IO a                          -- ^ return the retrieved object that meet the condition and has the given kwaitForData  filter x=  atomically $ waitForDataSTM  filter x
+            -> IO a                          -- ^ return the retrieved object that meet the condition and has the given key
 waitForData f x = atomically $ waitForDataSTM f x
 
 waitForDataSTM ::  (IResource a,  Typeable a)
@@ -1152,13 +1152,25 @@ getTimeSeconds=  do
    *example: wait for any respoinse from a Queue  if no response is given in 5 minutes, it is returned True.
 
   @
-   flag <- 'getTimeoutFlag' $  5 * 60
-   ap <- 'step'  .  atomically $  readSomewhere >>= return . Just  `orElse`  'waitUntilSTM' flag  >> return Nothing
+   flag \<- 'getTimeoutFlag' $  5 * 60
+   ap   \<- `step`  .  atomically $  readSomewhere >>= return . Just  `orElse`  'waitUntilSTM' flag  >> return Nothing
    case ap of
         Nothing -> do 'logWF' "timeout" ...
         Just x -> do 'logWF' $ "received" ++ show x ...
   @
 -}
+
+--longWait :: Integer -> Workflow m a -> Workflow m a
+--longWait time wf=
+--     WF $ \s -> do
+--        flag <- getTimeoutFlag  time
+--        forkIO $ atomically $ do
+--             b <- readTVar tv
+--             if b == False then retry else return ()
+--             start (wfName s) wf
+--        myThreadId >>= killThread
+
+
 waitUntilSTM ::  TVar Bool  -> STM()
 waitUntilSTM tv = do
         b <- readTVar tv

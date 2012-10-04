@@ -17,7 +17,7 @@ ithey return a boolean in a  return queue ( askUser)
 the booleans are summed up according with a monoid instance (sumUp)
 
 if the resullt is false, the correctWF workflow is executed
-If the result is True, the pipeline continues to the next stage  (checkValidated)
+If the result is True, the pipeline continues to the next stage  (`checkValidated`)
 
 the next stage is the same process with a new list of users (superbosses).
 There is a timeout of seven days. The result of the users that voted is summed
@@ -90,12 +90,12 @@ import Control.Concurrent
 import Control.Exception.Extensible (Exception,SomeException)
 import Data.RefSerialize
 import Control.Workflow.Stat
-
+import qualified Data.Vector as V
 import Data.TCache
 import Debug.Trace
+import Data.Maybe
 
-
-newtype ActionWF a= ActionWF (WFRef(Maybe a))  -- (WFRef (String, Bool))
+data ActionWF a= ActionWF (WFRef(Maybe a)) ThreadId -- (WFRef (String, Bool))
 
 -- | spawn a list of independent workflow 'actions' with a seed value 'a'
 -- The results are reduced by `merge` or `select`
@@ -107,9 +107,9 @@ split :: ( Typeable b
 split actions a = mapM (\ac ->
      do
          mv <- newWFRef Nothing
-         fork  (ac a >>= \v -> (step . liftIO . atomicallySync .  writeWFRef mv . Just) v )
+         th<- fork  (ac a >>= \v -> (step . liftIO . atomicallySync .  writeWFRef mv . Just) v )
 
-         return  $ ActionWF mv )
+         return  $ ActionWF mv th )
 
      actions
 
@@ -121,13 +121,12 @@ merge :: ( MonadIO io
            , Typeable b
            , Serialize a, Serialize b)
            => ([a] -> io b) -> [ActionWF a] -> Workflow io b
-merge  cond results= step $ mapM (\(ActionWF mv ) -> readWFRef1 mv ) results >>=  cond -- !> "cond"
+merge  cond results= step $ mapM (\(ActionWF mv _ ) -> liftIO (atomically $ readWFRef1 mv) ) results >>=  cond -- !> "cond"
 
-readWFRef1 :: ( MonadIO io
-              , Serialize a
+readWFRef1 :: ( Serialize a
               , Typeable a)
-              => WFRef (Maybe a) -> io  a
-readWFRef1 r = liftIO . atomically $ do
+              => WFRef (Maybe a) -> STM  a
+readWFRef1 r =  do
 
       mv <- readWFRef r
 
@@ -138,10 +137,11 @@ readWFRef1 r = liftIO . atomically $ do
 
 
 data Select
-            = Select
-            | Discard
-            | FinishDiscard
-            | FinishSelect
+            = Select           -- ^ select the source output
+            | Discard          -- ^ Discard the source output
+            | Continue         -- ^ Continue the source process
+            | FinishDiscard    -- ^ Discard this output, kill all and return the selected outputs
+            | FinishSelect     -- ^ Select this output, kill all and return the selected outputs
             deriving(Typeable, Read, Show)
 
 instance Exception Select
@@ -156,32 +156,34 @@ instance Exception Select
 -- A timeout of 0 means no timeout.
 select ::
          ( Serialize a
-         , Serialize [a]
+--         , Serialize [a]
          , Typeable a
          , HasFork io
          , CMC.MonadCatchIO io)
          => Integer
-         -> (a ->   io Select)
+         -> (a ->   STM Select)
          -> [ActionWF a]
          -> Workflow io [a]
 select timeout check actions=   do
- res  <- liftIO $ newMVar []
+ res  <- liftIO $ newTVarIO $ V.generate(length actions) (const Nothing)
  flag <- getTimeoutFlag timeout
  parent <- liftIO myThreadId
  checThreads <- liftIO $ newEmptyMVar
  count <- liftIO $ newMVar 1
  let process = do
-        let check'  (ActionWF ac ) =  do
-               r <- readWFRef1 ac
-               b <- check r
-               case b of
-                  Discard -> return ()
-                  Select  -> addRes r
-                  FinishDiscard -> do
-                       liftIO $ throwTo parent FinishDiscard
-                  FinishSelect -> do
-                       addRes r
-                       liftIO $ throwTo parent FinishDiscard
+        let check' (ActionWF ac _) i = do
+               liftIO . atomically $ do
+                   r <- readWFRef1 ac
+                   b <- check r
+                   case b of
+                      Discard -> return ()
+                      Select  -> addRes i r
+                      Continue -> addRes i r >> retry
+                      FinishDiscard -> do
+                           unsafeIOToSTM $ throwTo parent FinishDiscard
+                      FinishSelect -> do
+                           addRes i r
+                           unsafeIOToSTM $ throwTo parent FinishDiscard
 
                n <- liftIO $ CMC.block $ do
                      n <- takeMVar count
@@ -195,7 +197,7 @@ select timeout check actions=   do
               `CMC.catch` (\(e :: Select) -> liftIO $ throwTo parent e)
 
 
-        ws <- mapM ( fork . check') actions
+        ws <- mapM (\(ac,i) -> fork $ check' ac i) $ zip actions [0..]
         liftIO $ putMVar checThreads  ws
 
         liftIO $ atomically $ do
@@ -206,17 +208,18 @@ select timeout check actions=   do
         throw FinishDiscard
         where
 
-        addRes r=  liftIO $ CMC.block $  do
-            l <- takeMVar  res
-            putMVar  res $ r : l
+        addRes i r=   do
+            l <- readTVar  res
+            writeTVar  res $ l V.// [(i, Just r)]
 
  let killall  = liftIO $ do
        ws <- readMVar checThreads
-       liftIO $ mapM_ killThread ws                 -- !> "KILLALL"
+       liftIO $ mapM_ killThread ws
+       liftIO $ mapM_ (\(ActionWF _ th) -> killThread th)actions                -- !> "KILLALL"
 
  step $ CMC.catch   process -- (WF $ \s -> process >>= \ r -> return (s, r))
               (\(e :: Select)-> do
-                 liftIO $ readMVar res
+                 liftIO $ return . catMaybes . V.toList =<<  atomically ( readTVar res)
                  )
        `CMC.finally`   killall
 
@@ -233,7 +236,7 @@ justify _ (Just x) = return x
 -- @
 vote
       :: ( Serialize b
-         , Serialize [b]
+--         , Serialize [b]
          , Typeable b
          , HasFork io
          , CMC.MonadCatchIO io)
@@ -243,7 +246,7 @@ vote
       -> a
       -> Workflow io c
 vote timeout actions comp x=
-  split actions x >>= select timeout (const $ return Select)  >>=  comp
+  split actions x >>= select timeout (const $ return Continue)  >>=  comp
 
 
 -- | sum the outputs of a list of workflows  according with its monoid definition
@@ -251,7 +254,7 @@ vote timeout actions comp x=
 -- @ sumUp timeout actions = vote timeout actions (return . mconcat) @
 sumUp
   :: ( Serialize b
-     , Serialize [b]
+--     , Serialize [b]
      , Typeable b
      , Monoid b
      , HasFork io
@@ -291,7 +294,7 @@ main3=do
 
 
                  return refs
-   mapM (\r ->  readWFRef1 r >>= print) refs
+   mapM (\r ->  liftIO (atomically $ readWFRef1 r) >>= print) refs
 
 
 

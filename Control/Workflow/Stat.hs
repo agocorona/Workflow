@@ -22,13 +22,14 @@ import Control.Concurrent.STM(TVar, newTVarIO)
 import Data.IORef
 import Data.RefSerialize
 import Control.Workflow.IDynamic
+
 import Control.Monad(replicateM)
 
 import qualified Data.ByteString.Lazy.Char8 as B hiding (index)
 import  Data.ByteString.Char8(findSubstring)
 import Control.Workflow.IDynamic
 import Control.Concurrent
-import Control.Exception(bracket,SomeException)
+import Control.Exception(catch,bracket,SomeException)
 import System.IO.Error
 
 import System.Directory
@@ -36,7 +37,6 @@ import Data.List
 import Control.Monad
 
 --import Debug.Trace
---
 --(!>) =  flip trace
 
 data WF  s m l = WF { st :: s -> m (s,l) }
@@ -248,7 +248,7 @@ safe name f= bracket
      (openFile name ReadWriteMode)
      hClose
      f
-   `catch` (handler name (safe name f))
+   `Control.Exception.catch` (handler name (safe name f))
   where
   handler  name doagain e 
    | isDoesNotExistError e=do 
@@ -333,6 +333,13 @@ instance Indexable () where
   key _= "void"
 
 wFRefStr = "WFRef"
+
+-- | default instances
+
+instance (Show a, Read a )=> Serialize a where
+  showp= showpText
+  readp= readpText
+
 
 instance  Serialize (WFRef a) where
   showp (WFRef n ref)= do

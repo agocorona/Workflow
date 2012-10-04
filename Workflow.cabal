@@ -1,5 +1,5 @@
 name: Workflow
-version: 0.7.0.0
+version: 0.7.0.7
 cabal-version: >= 1.6
 build-type: Simple
 license: BSD3
@@ -7,8 +7,8 @@ license-file: LICENSE
 maintainer: agocorona@gmail.com
 stability: experimental
 bug-reports: agocorona@gmail.com
-synopsis:    Monadic transformer for persistence in threads. and workflow patterns
-description: Transparent support  for interruptible computations. A workflow can be seen as a persistent thread that executes any
+synopsis:    Monad transformer for thread state persistence and workflow patterns
+description: Transparent support  for interruptible computations. A workflow can be seen as a persistent thread that executes a
              monadic computation. Therefore, it can be used in very time consuming computations such are CPU intensive calculations
              or procedures that are most of the time waiting for the action of a process or an user, that are prone to comunication
              failures, timeouts or shutdowns. It also can be used if you like to restart your
@@ -33,10 +33,10 @@ extra-source-files: Demos/Fact.hs Demos/Inspect.hs
 
 
 library
-    build-depends: MonadCatchIO-mtl -any, RefSerialize >=0.2.8 && <0.3,
+    build-depends: MonadCatchIO-mtl -any, RefSerialize ==0.3.0.* ,
                    TCache -any && <1.0, base >=4 && <5, binary -any, bytestring -any,
                    containers -any, directory -any, extensible-exceptions -any,
-                    mtl -any, old-time -any, stm >2
+                    mtl -any, old-time -any, stm >2, vector -any
 
     exposed-modules: Control.Workflow
                      Control.Workflow.Configuration

@@ -1,8 +1,61 @@
-que ocurre cuando se reinicia un workflow y estaba interrumpido con lo que estaba en memoria
-  hay que
-    syncCache
-    flush key
 
+un workflow puede continuar a través de grupos y usuarios
+o puede ser un grupo activo con sus propios workflows
+como se arregla
+
+
+un grupo tiene que tener categorias de propuestas
+categorias tiene asociado workflow
+ al crear una categoria, hay que crear un workflow o elegir entre los ya existentes
+ cuando se crean las categorias? cuando se crea el grupo
+
+ data WFData = WFData{ wfname   :: WFName
+
+                    , wfprotos :: [Subject]}
+
+wfGroups= select $ pwrokflow .=. wfname
+
+donde los protos? aparte de todo
+WFData eliminado
+
+
+
+se puede generar una estructura por menu? no.
+
+primer mensaje que recibe un usuario:
+  opción de crear un grupo
+    lo recibe en su cola un proto de grupo.
+
+como se edita un wf creado con runConfiguration?
+ alternando (many/once)
+
+ editStep ui= do
+   readIORef n
+   if n== stat then  many1 ui else once ui
+  wher
+  many1 ui= do
+    r <- ui
+
+
+como configurar un workflow para un grupo:
+  wfData wfName groups protos tipos
+
+  cuando se activan?
+    cuando se crea el subject
+    pero el registro de un wf ocurre al registrar un proto
+      se envia al grupo y se inicia el wf
+
+    procedimiento mas automatico, porque otro WF puede enviar algo a un grupo no solo un usuario al crearlo
+       se mira la cola detectando adiciones
+         se mira el tipo de subject con atributo tipo
+           se lanza el WF
+
+         como se mira la cola? trigger
+         sendToGroup
+         addTrigger onmsgadded
+         onmgsadded ref Just (Queue n q1 q2)
+           | qname /= n -> return()
+           | otherwise =
 
 
 data Status a = Active | Killed | Finished | Returned a deriving (Eq,Typeable)
