@@ -1,3 +1,54 @@
+instalar requirments
+  meter setHeader como un requirement
+  setHeader que incluya requirement
+
+  data WebRequirement= CSSFile String
+                | CSS String
+                | JScriptFile String
+                | JScript String
+                | ServerProc (String, Token -> Workflow IO ())
+                | Header view
+                | Body view
+
+if not null WebRequirement
+    composerequirements
+   else
+    use mfHeader
+
+no es demasiado complicado?
+la opción anterior de introducir scripts via javascript.
+es mas potente (Puede usarse en runtime)
+hay que inyectar el codigo de inyeccion
+se puede hacer online?, hay que meter un tag
+
+
+como hacer backup:
+  hacer que lea de un nuevo directorio
+  rename TCacheData a ese directorio
+  escribe en el nuevo
+  copiar del viejo al nuevo todo
+
+  paraar la escritura
+  hacer una copia
+
+
+reversible monad:
+
+Instance Monad m,n => Reversible m n where
+  reverse :: (a -> m b) -> (b -> n a)
+
+como establecer contratos:
+
+type verified= Bool
+
+data Prime = Prime Int isPrime Verified (Int -> Bool)
+
+data Ring
+class Class a where
+  cf1
+  cf2
+
+
 
 un workflow puede continuar a través de grupos y usuarios
 o puede ser un grupo activo con sus propios workflows

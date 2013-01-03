@@ -7,6 +7,7 @@
              -XOverloadedStrings
              -XRecordWildCards
              -XScopedTypeVariables
+             -XPatternGuards
           #-}
 module Control.Workflow.Stat where
 
@@ -21,13 +22,13 @@ import Control.Concurrent(ThreadId)
 import Control.Concurrent.STM(TVar, newTVarIO)
 import Data.IORef
 import Data.RefSerialize
-import Control.Workflow.IDynamic
+import Data.Persistent.IDynamic
 
 import Control.Monad(replicateM)
 
 import qualified Data.ByteString.Lazy.Char8 as B hiding (index)
 import  Data.ByteString.Char8(findSubstring)
-import Control.Workflow.IDynamic
+import Data.Persistent.IDynamic
 import Control.Concurrent
 import Control.Exception(catch,bracket,SomeException)
 import System.IO.Error
@@ -98,7 +99,7 @@ instance  Serialize Stat where
 
     showp  stat@Stat{..} = do
               s <- showps $ Prelude.reverse versions
-              let l= show (B.length s + lenLen) ++" "++ show state
+              let l= show (B.length s + 1 + lenLen) ++" "++ show state
               insertString . B.pack $ l ++ take (fromIntegral lenLen - length l - 2) (repeat ' ')++ "\r\n"
               insertString s
               header stat
@@ -204,9 +205,9 @@ instance IResource Stat where
         | otherwise= do
            hSeek h AbsoluteSeek 0                -- !> ("WRITING partial " ++ wfName )
            let s = runWC context $ insertString "\r\n" >> showpe written ( reverse $ take (state - written)   versions)
-           let l= show (seek -3 + B.length s) ++" "++ show state
-           B.hPut h . B.pack $ l ++ take (fromIntegral lenLen - length l - 2) (repeat ' ') ++ "\r\n"
-           hSeek h AbsoluteSeek (fromIntegral seek  - 3)
+           let l= show (seek - 5 + B.length s) ++" "++ show state
+           B.hPut h . B.pack $ l ++ take (fromIntegral lenLen - length l - 2) (repeat ' ')  ++ "\r\n"
+           hSeek h AbsoluteSeek (fromIntegral seek  - 5)
            B.hPut h s
            writeHeader h
            writeContext h
@@ -318,19 +319,6 @@ showp1 (IDyn r)=
       DLeft (s, _) -> insertString s
 
 
-
-instance Indexable String where
-  key= id
-
-instance Indexable Int where
-  key= show
-
-instance Indexable Integer where
-  key= show
-
-
-instance Indexable () where
-  key _= "void"
 
 wFRefStr = "WFRef"
 

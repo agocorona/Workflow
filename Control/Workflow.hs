@@ -110,6 +110,8 @@ module Control.Workflow
 , newWFRef
 , stepWFRef
 , readWFRef
+, getNRefs
+, getWFRef
 -- * State manipulation
 , writeWFRef
 , moveState
@@ -180,7 +182,7 @@ import qualified Control.Exception.Extensible as E
 import Data.TCache
 import Data.TCache.Defs
 import Data.RefSerialize
-import Control.Workflow.IDynamic
+import Data.Persistent.IDynamic
 import Unsafe.Coerce
 import System.Mem.StableName
 import Control.Workflow.Stat
@@ -658,7 +660,7 @@ getState  namewf f v= liftIO . atomically $ getStateSTM
                 else  do            -- has been running but not running now
                    mst <- readDBRef sref
                    stat' <- case mst of
-                          Nothing -> error $ "getState: Workflow not found: "++ key
+                          Nothing -> return stat1 -- error $ "getState: Workflow not found: "++ key
                           Just s' -> do
                              -- the thread may have been killed by an exception when running
                              s <- case recover  s' of
@@ -771,16 +773,16 @@ getAll=  WF(\s -> return (s, versions s))
 --      :: (Serialize a, Typeable a,  Monad m)
 --      => Int                                 -- ^ the step number. If negative, count from the current state backwards
 --      -> Workflow m a                        -- ^ return the n-tn intermediate step result
---getStep i=  WF(\s -> do
---                let ind= index s
---                    stat= state s
+--getStep i=    WF(\s -> do
+--
+--                let stat= state s
 --
 --                return (s, if i > 0 && i < stat then fromIDyn $ versions s !! (stat -i-1)
 --                           else if i <= 0 && i > -stat then fromIDyn $ versions s !! (stat - ind +i-1)
 --                           else error "getStep: wrong index")
 --             )
 
--- | Return the list of object keys that are running for a workflow
+-- | Return the keys  of the workflows that are running with a given prefix
 getWFKeys :: String -> IO [String]
 getWFKeys wfname= do
       mwfs <- atomically $ readDBRef tvRunningWfs
@@ -911,24 +913,41 @@ newWFRef :: ( Serialize a
            => a -> Workflow m  (WFRef a)
 newWFRef x= stepWFRef (return  x) >>= return . fst
 
--- | Execute  an step but return a reference to the result besides the result itself
+-- | Execute  an step and return a reference to the result besides the result itself
 --
 stepWFRef :: ( Serialize a
            , Typeable a
            , MonadIO m)
             => m a -> Workflow m  (WFRef a,a)
 stepWFRef exp= do
-     r <- step exp  -- !> "stepWFRef"
-
+     r <- step exp           -- !> "stepWFRef"
      WF(\s@Stat{..} -> do
-
-
-       let  (n,flag)= if recover  then (state  - (L.length  versions) -1  ,False)
+       let  (n,flag)= if recover
+                          then (state  - (L.length  versions) -1  ,False)
                           else (state -1 ,True)
        let  ref = WFRef n self
        let s'= s{references= (n,(toIDyn r,flag)):references }
        liftIO $ atomically $ writeDBRef self s'
        r  `seq` return  (s',(ref,r)) )
+
+getNRefs wfname= do
+   st <-  getResource stat0{wfName= wfname} `onNothing` error ("Workflow not found: "++ wfname)
+   return $ L.length $ references st
+
+
+getWFRef :: Int -> String -> WFRef a
+getWFRef n s= WFRef n $ getDBRef s
+--getReference ::(Monad m
+--             , Serialize a
+--             , Typeable a)
+--             => Int -> Workflow m  (Maybe a)
+--getReference n = WF $ \st ->
+--    case  L.lookup n $! references st of
+--        Just (r,_) -> return(st,  Just $ fromIDyn r)
+--        Nothing -> do
+--          let  n1=  state st - n
+--          return (st,  Just . fromIDyn $ versions st !! n1)
+
 
 
 -- | Read the content of a Workflow reference. Note that its result is not in the Workflow monad

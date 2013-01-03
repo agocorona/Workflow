@@ -47,8 +47,8 @@ library
                 MultiParamTypeClasses ExistentialQuantification
                 TypeSynonymInstances RecordWildCards DeriveDataTypeable
     hs-source-dirs: .
-    other-modules: Control.Workflow.Stat Control.Workflow.Stat
-                   Control.Workflow.IDynamic
+    other-modules: Control.Workflow.Stat
+
 
 source-repository head
   type : git

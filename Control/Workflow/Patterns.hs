@@ -150,7 +150,9 @@ instance Exception Select
 -- The check filter, can select , discard or finish the entire computation before
 -- the timeout is reached. When the computation finalizes, it kill all
 -- the pending workflows and return the list of selected outputs
--- the timeout is in seconds and is no limited to a single execution, so it can proceed for years.
+-- the timeout is in seconds and it is is in the workflow monad,
+-- so it is possible to restart the process if interrupted,
+-- so it can proceed for years.
 --
 -- This is necessary for the modelization of real-life institutional cycles such are political elections
 -- A timeout of 0 means no timeout.
