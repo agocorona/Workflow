@@ -129,19 +129,19 @@ instance  Serialize Stat where
 keyWF :: Indexable a => String -> a -> String
 keyWF wn x= wn ++ "/" ++ key x
 
-
-data WFRef a= WFRef !Int !(DBRef Stat)  deriving (Typeable, Show)
+data WFRef a= WFRef !Int !(DBRef Stat)  deriving (Typeable, Show, Read)
 
 instance Indexable (WFRef a) where
-    key (WFRef n ref)= keyObjDBRef ref++('#':show n)
+    key (WFRef n ref)= keyObjDBRef ref++('-':show n)
 
 
 --instance  Serialize a  => Serializable a  where
 --  serialize = runW . showp
 --  deserialize = runR readp
 
-pathWFlows=  (defPath (1:: Int)) ++ "Workflow/"
+pathWFlows=  (defPath (1:: Int)) ++ "workflow/"
 stFName st = pathWFlows ++ keyResource st
+
 Persist fr fw fd = defaultPersist
 
 --nheader= "/header"

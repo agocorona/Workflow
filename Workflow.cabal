@@ -1,5 +1,5 @@
 name: Workflow
-version: 0.7.0.7
+version: 0.8.0.1
 cabal-version: >= 1.6
 build-type: Simple
 license: BSD3
@@ -12,10 +12,12 @@ description: Transparent support  for interruptible computations. A workflow can
              monadic computation. Therefore, it can be used in very time consuming computations such are CPU intensive calculations
              or procedures that are most of the time waiting for the action of a process or an user, that are prone to comunication
              failures, timeouts or shutdowns. It also can be used if you like to restart your
-             program at the point where the user left it last time.
-             .
+             program at the point where the user left it last time
+             .             .
              The computation can be restarted at the interrupted point thanks to its logged state in permanent storage.
-             Besides that, the package also provides other services associated to workflows
+             The thread state is located in files by default. It can be moved and continued in another computer.
+             Besides that, the package also provides other higher level services associated to workflows: Workflow patters and
+             and a general configuarion utility.
              .
              This release inprove the logging/recovery process in workflows with with many steps
              .
@@ -28,12 +30,12 @@ author: Alberto Gómez Corona
 data-dir: ""
 
 extra-source-files: Demos/Fact.hs Demos/Inspect.hs
-                    Demos/docAprobal.hs Demos/pr.hs Demos/sequence.hs
+                    Demos/docAprobal.hs  Demos/sequence.hs
 
 
 
 library
-    build-depends: MonadCatchIO-mtl -any, RefSerialize ==0.3.0.* ,
+    build-depends: MonadCatchIO-mtl -any, RefSerialize ==0.3.1.* ,
                    TCache -any && <1.0, base >=4 && <5, binary -any, bytestring -any,
                    containers -any, directory -any, extensible-exceptions -any,
                     mtl -any, old-time -any, stm >2, vector -any

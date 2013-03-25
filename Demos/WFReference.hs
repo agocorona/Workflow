@@ -6,19 +6,34 @@ import Control.Concurrent(threadDelay)
 import System.IO (hFlush,stdout)
 import Control.Concurrent
 import qualified Data.ByteString.Lazy.Char8 as B
-
+import Control.Monad.Trans
 
 
 main= do
 
-   refs <- exec1 "WFRef" $ do
+   (ref,ref2) <- exec1 "WFRef" $ do
              step $ return (1 :: Int)
-             ref <- newWFRef  "bye initial valoe"
-             step $ return (3 :: Int)
-             return ref
 
-   atomically $ writeWFRef refs "hi final value"
-   s <- atomically $   readWFRef refs
+             ref <- newWFRef  "bye initial value1"
+
+             step $ return (3 :: Int)
+             liftIO $ do
+                 s <- atomically $ readWFRef ref
+                 print s
+
+             ref2 <- newWFRef  "bye initial value2"
+
+             liftIO $ do
+                 s <- atomically $ readWFRef ref2
+                 print s
+             return (ref,ref2)
+   print ref
+   print ref2
+   atomically $ writeWFRef ref "hi final value1"
+   s <- atomically $ readWFRef ref
+   print s
+   atomically $ writeWFRef ref2 "hi final value2"
+   s <- atomically $ readWFRef ref2
    print s
    Just stat <- getWFHistory "WFRef" ()
    B.putStrLn $ showHistory stat
@@ -27,7 +42,9 @@ main= do
 
    stat<- getWFHistory "WFRef" () `onNothing` error "stat not found"
    B.putStrLn $ showHistory stat
-   s <- atomically $   readWFRef refs
+   s <- atomically $   readWFRef ref
+   print s
+   s <- atomically $   readWFRef ref2
    print s
 
 

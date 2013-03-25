@@ -80,7 +80,8 @@ Show,Read  RefSerialize and Data Binary instances.
 module Control.Workflow
 
 (
-  Workflow --    a useful type name
+  Stat
+, Workflow --    a useful type name
 , WorkflowList
 , PMonadTrans (..)
 , MonadCatchIO (..)
@@ -100,6 +101,8 @@ module Control.Workflow
 , WFErrors(..)
 -- * Lifting to the Workflow monad
 , step
+, getWFStat
+, stepExec
 --, while
 --, label
 --, stepControl
@@ -110,7 +113,6 @@ module Control.Workflow
 , newWFRef
 , stepWFRef
 , readWFRef
-, getNRefs
 , getWFRef
 -- * State manipulation
 , writeWFRef
@@ -254,8 +256,10 @@ instance (MonadTrans t, Monad m) => PMonadTrans t m a where
     plift= Control.Monad.Trans.lift
 
 --- | Handle with care: this instance  will force
--- the unwanted execution at recovery of every liftted IO procedure
+-- the  execution at recovery of every liftted IO procedure
 -- better use 'step . liftIO'  instead of 'liftIO'
+
+
 instance MonadIO m => MonadIO (WF Stat  m) where
    liftIO= unsafeIOtoWF
 
@@ -403,13 +407,13 @@ exec str f x =
 exec1nc ::  (  Monad m, MonadIO m, CMC.MonadCatchIO m)
           => String ->  Workflow m a ->   m  a
 exec1nc str f  =
-       (do
+      do
             v <- getState str f ()
             case v of
               Right (name, f, stat) -> do
                  r <- runWF1 name f  stat False
                  return  r
-              Left err -> CMC.throw err)
+              Left err -> CMC.throw err
      `CMC.catch`
        (\(e :: CE.SomeException) -> liftIO $ do
              let name=  keyWF str ()
@@ -451,8 +455,8 @@ step :: ( Monad m
         =>   m a
         ->  Workflow m a
 
-step  mx= WF(\s -> do
-        let stat= state s
+step mx= WF(\s -> do
+        let
             recovers= recover s
             versionss= versions s
 --                                      !> "vvvvvvvvvvvvvvvvvvv"
@@ -466,26 +470,34 @@ step  mx= WF(\s -> do
           else do
             let ref= self s
             when (recovers && L.null versionss) $ do
-
                 liftIO $ atomically $ do
                   s' <- readDBRef ref `justifyM` error ("step: not found: "++ wfName s)
                   writeDBRef ref s'{recover= False,references= references s}
-            stepExec  ref  mx)
+            stepExec1  ref  mx)
 
-stepExec  sref  mx= do
-            x' <- mx
+getWFStat :: Monad m => Workflow m (DBRef Stat)
+getWFStat= WF $ \s -> return (s,self s)
 
-            liftIO . atomicallySync $ do
-              s <- readDBRef  sref  >>= return . fromMaybe (error $ "step: readDBRef: not found:" ++ keyObjDBRef sref)
+stepExec
+  :: (Typeable t, Serialize t, MonadIO m) =>
+     DBRef Stat -> m t -> m (DBRef Stat, t)
+stepExec ref mx= do
+   (s,x) <- stepExec1 ref mx
+   return (self s, x)
 
-              let versionss= versions s
-                  dynx=  toIDyn x'
-                  ver= dynx: versionss
-                  s'= s{ recover= False, versions =  ver, state= state s+1}
+stepExec1  sref  mx= do
+    x' <- mx
+    liftIO . atomicallySync $ do
+      s <- readDBRef  sref  >>= return . fromMaybe (error $ "step: readDBRef: not found:" ++ keyObjDBRef sref)
+      let versionss= versions s
+          dynx=  toIDyn x'
+          ver= dynx: versionss
+          s'= s{ recover= False, versions =  ver, state= state s+1}
+      writeDBRef sref s'
+      return (s', x')
 
-              writeDBRef sref s'
-
-              return (s', x')
+--undoStep :: Monad m => Workflow m ()
+--undoStep= WF $ \s@Stat{..} -> return(s{state=state-1, versions= L.tail versions},())
 
 isInRecover :: Monad m => Workflow m Bool
 isInRecover = WF(\s@Stat{..} ->
@@ -512,7 +524,7 @@ stepDebug  f = r
 
         in case recover s && not(L.null $ versions s) of
             True  ->   f >>= \x -> return (s{versions= L.tail $ versions s},x)
-            False -> stepExec  (self s)  f)
+            False -> stepExec1  (self s)  f)
 
 -- Executes a computation 'f' in a loop while the return value meets the condition 'cond' is met.
 -- At recovery time, the current state of the loop is restored.
@@ -925,29 +937,29 @@ stepWFRef exp= do
        let  (n,flag)= if recover
                           then (state  - (L.length  versions) -1  ,False)
                           else (state -1 ,True)
-       let  ref = WFRef n self
-       let s'= s{references= (n,(toIDyn r,flag)):references }
+            ref = WFRef n self
+            s'= s{references= (n,(toIDyn r,flag)):references }
        liftIO $ atomically $ writeDBRef self s'
        r  `seq` return  (s',(ref,r)) )
 
-getNRefs wfname= do
-   st <-  getResource stat0{wfName= wfname} `onNothing` error ("Workflow not found: "++ wfname)
-   return $ L.length $ references st
+getWFRef :: Indexable a => Int -> String -> a -> WFRef b
+getWFRef n s v= WFRef n $ getDBRef $ keyResource stat0{wfName= keyWF s  v}
 
 
-getWFRef :: Int -> String -> WFRef a
-getWFRef n s= WFRef n $ getDBRef s
---getReference ::(Monad m
---             , Serialize a
---             , Typeable a)
---             => Int -> Workflow m  (Maybe a)
---getReference n = WF $ \st ->
---    case  L.lookup n $! references st of
---        Just (r,_) -> return(st,  Just $ fromIDyn r)
---        Nothing -> do
---          let  n1=  state st - n
---          return (st,  Just . fromIDyn $ versions st !! n1)
+--getNRefs wfname= do
+--   st <-  getResource stat0{wfName= wfname} `onNothing` error ("Workflow not found: "++ wfname)
+--   return $ L.length $ references st
 
+-- |return a reference to the last step result
+--getWFRef ::(MonadIO m,Serialize a, Typeable a) =>  Monad m =>  a -> Workflow m (WFRef a)
+--getWFRef r = WF(\s@Stat{..} -> do
+--       let  (n,flag)= if recover
+--                          then (state  - (L.length  versions) -1  ,False)
+--                          else (state -1 ,True)
+--            ref = WFRef n self
+--            s'= s{references= (n,(toIDyn r,flag)):references }
+--       liftIO $ atomically $ writeDBRef self s'
+--       r  `seq` return  (s',ref) )
 
 
 -- | Read the content of a Workflow reference. Note that its result is not in the Workflow monad
@@ -963,7 +975,7 @@ readWFRef (WFRef n ref)= do
       case  L.lookup n $! references st of
         Just (r,_) -> return . Just $ fromIDyn r
         Nothing -> do
-          let  n1=  state st - n
+          let  n1=  if recover st then n else state st - n
           return . Just . fromIDyn $ versions st !! n1
 
 --      flushDBRef ref !> "readWFRef"
@@ -1035,7 +1047,7 @@ moveState   :: (MonadIO m
              =>String -> a -> a -> m ()
 moveState wf t t'=  liftIO $ do
      atomicallySync $ do
-           withSTMResources[stat0{wfName= n}] $ change n
+
            mrun <-  readDBRef tvRunningWfs
            case mrun of
                 Nothing -> return()
@@ -1044,15 +1056,16 @@ moveState wf t t'=  liftIO $ do
                   let th= case mr of Nothing -> Nothing; Just(_,mt)-> mt
                   let map'= M.insert n' (wf,th) $ M.delete n map
                   writeDBRef tvRunningWfs $ Running  map'
+           withSTMResources[stat0{wfName= n}] $ change n
 
      where
      n = keyWF wf t
      n'= keyWF wf t'
-     change m [Nothing] = error $ "changeState: Workflow not found: "++ show n
+     change n  [Nothing] = error $ "moveState: Workflow not found: "++ show n
      change n [Just s] = resources{toAdd= [ s{wfName=n',versions = toIDyn t': L.tail( versions s) }]
                                              ,toDelete=[s]}
 
-     doit n [Nothing]= error $ "moveState: state not found for: " ++ n
+
 
 
 
@@ -1127,11 +1140,11 @@ waitForSTM  filter wfname x=  do
      Just mx -> do
         let  Stat{ versions= d:_}=  mx
         case safeFromIDyn d of
-          Nothing -> retry                                            -- `debug` "waithFor retry Nothing"
-          Just x ->
+          Left _ -> retry                                            -- `debug` "waithFor retry Nothing"
+          Right x ->
             case filter x  of
                 False -> retry                                          -- `debug` "waitFor false filter retry"
-                True  ->  return x      --  `debug` "waitfor return"
+                True  -> return x      --  `debug` "waitfor return"
 
 
 
