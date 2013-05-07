@@ -727,8 +727,7 @@ startWF
     ::  ( CMC.MonadCatchIO m, MonadIO m
         , Serialize a, Serialize b
         , Typeable a
-        , Indexable a
-        , Typeable b)
+        , Indexable a)
     =>  String                       -- ^ Name of workflow in the workflow list
     -> a                             -- ^ Initial value (ever use the initial value even to restart the workflow)
     -> WorkflowList m  a b           -- ^ function to execute
@@ -742,9 +741,8 @@ startWF namewf v wfs=
 
 -- | Re-start the non finished workflows in the list, for all the initial values that they may have been invoked
 restartWorkflows
-   :: (Serialize a, Serialize b, Typeable a
-   , Indexable b,   Typeable b)
-   =>  WorkflowList IO a b      -- the list of workflows that implement the module
+   :: (Serialize a, Typeable a)
+   =>  WorkflowList IO a b     -- the list of workflows that implement the module
    -> IO ()                    -- Only workflows in the IO monad can be restarted with restartWorkflows
 restartWorkflows map = do
   mw <- liftIO $ getResource ((Running undefined ) )  -- :: IO (Maybe(Stat a))
@@ -1173,6 +1171,9 @@ getTimeoutFlag  t = do
              forkIO $  do waitUntil t ;  atomically $ writeTVar tv True
           return (s, tv)
 
+
+
+
 getTimeSeconds :: IO Integer
 getTimeSeconds=  do
       TOD n _  <-  getClockTime
@@ -1212,7 +1213,7 @@ waitUntilSTM tv = do
 -- See `waitUntilSTM`
 
 waitUntil:: Integer -> IO()
-waitUntil t= getTimeSeconds >>= \tnow -> wait (t-tnow)
+waitUntil t= getTimeSeconds >>= \tnow -> wait ((t-tnow)*1000000)
 
 
 wait :: Integer -> IO()
@@ -1220,7 +1221,7 @@ wait delta=  do
         let delay | delta < 0= 0
                   | delta > (fromIntegral  maxInt) = maxInt
                   | otherwise  = fromIntegral $  delta
-        threadDelay $ delay  * 1000000
+        threadDelay $ delay
         if delta <= 0 then   return () else wait $  delta - (fromIntegral delay )
 
 -- | Return either the result of the STM conputation or Nothing in case of timeout

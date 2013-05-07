@@ -1,5 +1,5 @@
 name: Workflow
-version: 0.8.0.1
+version: 0.8.0.2
 cabal-version: >= 1.6
 build-type: Simple
 license: BSD3
@@ -7,7 +7,7 @@ license-file: LICENSE
 maintainer: agocorona@gmail.com
 stability: experimental
 bug-reports: agocorona@gmail.com
-synopsis:    Monad transformer for thread state persistence and workflow patterns
+synopsis:    Workflow patterns and a monad for thread state logging & recovery
 description: Transparent support  for interruptible computations. A workflow can be seen as a persistent thread that executes a
              monadic computation. Therefore, it can be used in very time consuming computations such are CPU intensive calculations
              or procedures that are most of the time waiting for the action of a process or an user, that are prone to comunication
@@ -18,8 +18,6 @@ description: Transparent support  for interruptible computations. A workflow can
              The thread state is located in files by default. It can be moved and continued in another computer.
              Besides that, the package also provides other higher level services associated to workflows: Workflow patters and
              and a general configuarion utility.
-             .
-             This release inprove the logging/recovery process in workflows with with many steps
              .
              See "Control.Workflow" for details
 
