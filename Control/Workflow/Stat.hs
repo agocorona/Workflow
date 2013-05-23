@@ -164,7 +164,7 @@ instance IResource Stat where
 
 --
   writeResource stat@Stat{..}
-   | recover = return ()
+   | recover = return ()                         -- !> "recover"
 
    | refs <- filter (\(n,(_,written))-> not written) references,
      not $ null refs= do

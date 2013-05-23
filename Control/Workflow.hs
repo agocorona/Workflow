@@ -189,14 +189,13 @@ import Unsafe.Coerce
 import System.Mem.StableName
 import Control.Workflow.Stat
 
---import Debug.Trace
---a !> b= trace b a
+import Debug.Trace
+a !> b= trace b a
 
 
 type Workflow m = WF  Stat  m   -- not so scary
 
 type WorkflowList m a b=  M.Map String  (a -> Workflow m  b)
-
 
 instance Monad m =>  Monad (WF  s m) where
     return  x = WF (\s ->  return  (s, x))
@@ -403,23 +402,30 @@ exec str f x =
 
 -- | executes a workflow, but does not mark it as finished even if
 -- the process ended.
--- The workflow will return the las result.
+-- It this case, the workflow just will return the last result.
+-- If the workflow was gathering data from user questions for a configuration, then this
+-- primitive will store them in the log the first time, and can be retrieve it the next time.
 exec1nc ::  (  Monad m, MonadIO m, CMC.MonadCatchIO m)
           => String ->  Workflow m a ->   m  a
-exec1nc str f  =
-      do
-            v <- getState str f ()
-            case v of
-              Right (name, f, stat) -> do
-                 r <- runWF1 name f  stat False
-                 return  r
-              Left err -> CMC.throw err
-     `CMC.catch`
-       (\(e :: CE.SomeException) -> liftIO $ do
-             let name=  keyWF str ()
-             clearRunningFlag name  --`debug` ("exception"++ show e)
+exec1nc str f  =do
+    v <- getState str f ()
+    case v of
+      Left err -> CMC.throw err
+      Right (name, f, stat) -> do
+         r <- runWF1 name f  stat False
+         return  r
 
-             CMC.throw e )
+        `CMC.catch`
+           (\(e :: CE.SomeException) -> liftIO $ do
+                 let name=  keyWF str ()
+                 clearRunningFlag name  --`debug` ("exception"++ show e)
+                 CMC.throw e )
+        `CMC.finally`
+          (liftIO . atomically .
+               when(recover stat) $ do
+                  let ref= self stat
+                  s <- readDBRef ref `justifyM` error ("step: not found: "++ wfName stat)
+                  writeDBRef ref s{recover= False,versions=L.reverse $ versions s})
 
 mv :: MVar Int
 mv= unsafePerformIO $ newMVar 0
@@ -742,10 +748,10 @@ startWF namewf v wfs=
 -- | Re-start the non finished workflows in the list, for all the initial values that they may have been invoked
 restartWorkflows
    :: (Serialize a, Typeable a)
-   =>  WorkflowList IO a b     -- the list of workflows that implement the module
+   =>  M.Map String (a -> Workflow IO b)     -- the list of workflows that implement the module
    -> IO ()                    -- Only workflows in the IO monad can be restarted with restartWorkflows
 restartWorkflows map = do
-  mw <- liftIO $ getResource ((Running undefined ) )  -- :: IO (Maybe(Stat a))
+  mw <- liftIO $ getResource ((Running undefined ) )   -- :: IO (Maybe(Stat a))
   case mw of
     Nothing -> return ()
     Just (Running all) ->  mapM_ start . mapMaybe  filter  . toList  $ all
@@ -896,11 +902,8 @@ delWF1 name= liftIO $ do
 
 
 clearRunningFlag name= liftIO $ atomically $ do
-  mrun <-  readDBRef tvRunningWfs
-  case mrun of
-   Nothing -> error $ "clearRunningFLag: non existing workflows" ++ name
-   Just(Running map) -> do
-   case M.lookup  name map of
+  Running map <-readDBRef tvRunningWfs `onNothing` error ( "clearRunningFLag: non existing workflows" ++ name)
+  case M.lookup  name map of
     Just(_, Nothing) -> return (map,Nothing)
     Just(v, Just th) -> do
       writeDBRef tvRunningWfs . Running $ M.insert name (v, Nothing) map
@@ -940,9 +943,31 @@ stepWFRef exp= do
        liftIO $ atomically $ writeDBRef self s'
        r  `seq` return  (s',(ref,r)) )
 
-getWFRef :: Indexable a => Int -> String -> a -> WFRef b
-getWFRef n s v= WFRef n $ getDBRef $ keyResource stat0{wfName= keyWF s  v}
+-- | return a reference to the nth elem of a workflow. The workflow is identified by
+-- the workflow string and the parameter. If there is no parameter, use ()
+-- In case the type of the reference is not the expected, it return an error string.This is only known at runtime
+--
+-- In case the workflow is not found it produces an error message
+getWFRef ::(Typeable b, Serialize b, Indexable a) => Int -> String -> a -> STM(Either String (WFRef b))
+getWFRef n wfname v= wfref
+  where
+  wfref= do
+     let ref = getDBRef $ keyResource stat0{wfName= keyWF wfname  v}
+     s@Stat{..} <- readDBRef ref `onNothing` error ("getWFRef: not found "++ wfname)
+     let (n,flag)= if recover
+                          then (state  - (L.length  versions ) -1 ,False)
+                          else (state - 1 ,True)
 
+         mr= (safeFromIDyn $ versions  !! n) `asTypeOf` typeOfRef wfref
+     case mr `seq` mr of
+       Left s -> return $ Left s
+       Right r -> do
+          let s'= s{references= (n,(toIDyn r,flag)):references }
+          writeDBRef self s'
+          return . Right $ WFRef n ref
+
+  typeOfRef :: STM(Either String (WFRef a)) -> Either String a
+  typeOfRef= undefined
 
 --getNRefs wfname= do
 --   st <-  getResource stat0{wfName= wfname} `onNothing` error ("Workflow not found: "++ wfname)
@@ -966,15 +991,15 @@ readWFRef :: (  Serialize a
              => WFRef a
              -> STM (Maybe a)
 readWFRef (WFRef n ref)= do
-   mr <- readDBRef ref
-   case mr of
+   mst <- readDBRef ref
+   case mst of
     Nothing -> return Nothing
-    Just st ->
+    Just st -> do
       case  L.lookup n $! references st of
         Just (r,_) -> return . Just $ fromIDyn r
         Nothing -> do
           let  n1=  if recover st then n else state st - n
-          return . Just . fromIDyn $ versions st !! n1
+          return . Just . fromIDyn $ versions st !! n1 !> (show (L.length $ versions st) ++ " "++ show n1)
 
 --      flushDBRef ref !> "readWFRef"
 --      st <- readDBRef ref `justifyM` (error $ "readWFRef: reference has been deleted from storaga: "++ show ref)
@@ -1083,7 +1108,7 @@ logWF str=do
 
 
 -- | Wait until a TCache object (with a certaing key) meet a certain condition (useful to check external actions )
--- NOTE if anoter process delete the object from te cache, then waitForData will no longuer work
+-- NOTE if anoter process delete the object from te cache, then waitForData will no longer work
 -- inside the wokflow, it can be used by lifting it :
 --          do
 --                x <- step $ ..
@@ -1111,7 +1136,7 @@ waitForDataSTM  filter x=  do
                         False -> retry
                         True  -> return x
 
--- | Observe the workflow log untiil a condition is met.
+-- | Observe the workflow log until a condition is met.
 waitFor
       ::   ( Indexable a, Serialize a, Serialize b,  Typeable a
            , Indexable b,  Typeable b)
@@ -1126,7 +1151,7 @@ waitForSTM
            , Indexable b,  Typeable b)
       =>  (b -> Bool)                    -- ^ The condition that the retrieved object must meet
       -> String                          -- ^ The workflow name
-      -> a                               -- ^ The INITIAL value used in the workflow to start it
+      -> a                               -- ^ The INITIAL value used in the workflow
       -> STM b                           -- ^ The first event that meet the condition
 waitForSTM  filter wfname x=  do
     let name= keyWF wfname x
@@ -1141,17 +1166,17 @@ waitForSTM  filter wfname x=  do
           Left _ -> retry                                            -- `debug` "waithFor retry Nothing"
           Right x ->
             case filter x  of
-                False -> retry                                          -- `debug` "waitFor false filter retry"
-                True  -> return x      --  `debug` "waitfor return"
+                False -> retry                                       -- `debug` "waitFor false filter retry"
+                True  -> return x                                    -- `debug` "waitfor return"
 
 
 
 --{-# DEPRECATED waitUntilSTM, getTimeoutFlag "use withTimeout instead" #-}
 
 -- | Start the timeout and return the flag to be monitored by 'waitUntilSTM'
--- This timeout is persistent. This means that the time start to count from the first call to getTimeoutFlag on
--- no matter if the workflow is restarted. The time that the worlkflow has been stopped count also.
--- the wait time can exceed the time between failures.
+-- This timeout is persistent. This means that the counter is initialized in the first call to getTimeoutFlag
+-- no matter if the workflow is restarted. The time during which the worlkflow has been stopped count also.
+-- Thus, the wait time can exceed the time between failures.
 -- when timeout is 0 means no timeout.
 getTimeoutFlag
         :: MonadIO m
@@ -1197,10 +1222,11 @@ getTimeSeconds=  do
 --longWait time wf=
 --     WF $ \s -> do
 --        flag <- getTimeoutFlag  time
---        forkIO $ atomically $ do
---             b <- readTVar tv
+--        forkIO $ do
+--          atomically $ do
+--             b <- readTVar flag
 --             if b == False then retry else return ()
---             start (wfName s) wf
+--          start (wfName s) wf ""
 --        myThreadId >>= killThread
 
 
@@ -1224,24 +1250,26 @@ wait delta=  do
         threadDelay $ delay
         if delta <= 0 then   return () else wait $  delta - (fromIntegral delay )
 
--- | Return either the result of the STM conputation or Nothing in case of timeout
--- This timeout is persistent. This means that the time start to count from the first call to getTimeoutFlag on
--- no matter if the workflow is restarted. The time that the worlkflow has been stopped count also.
+-- | Return either the result of the STM conputation or Nothing in case of timeout.
+-- The computation can retry
+-- This timeout is persistent. This means that the counter is initialized in the first call to getTimeoutFlag
+-- no matter if the workflow is restarted. The time during which the worlkflow has been stopped count also.
 -- Thus, the wait time can exceed the time between failures.
--- when timeout is 0 means no timeout.
+-- when timeout is 0 it means no timeout.
 withTimeout :: ( MonadIO m, Typeable a, Serialize a)=> Integer -> STM a -> Workflow m (Maybe a)
 withTimeout time  f = do
   flag <- getTimeoutFlag time
-  step . liftIO . atomically $ (f >>=  return  .  Just )
+  step . liftIO . atomically $ (f >>= return  .  Just )
                                `orElse`
                                (waitUntilSTM flag  >> return  Nothing)
 
 
 -- | Executes a computation understanding that it is  inside the
 -- workflow  identified by 'id'. If 'f' finish after  'time'
--- it genetates a 'Timeout' exception which must result in the end of the workflow.
+-- it genetates a 'Timeout' exception which may result in the end of the workflow if the
+-- programmer does not catch it.
 -- If the workflow is restarted after 'time2' has elapsed, the workflow
--- will restart from the beginning. If not, it will restart at the last checkpoint.
+-- will restart from the beginning. If not, it will restart after the last logged step.
 --
 -- Usually @time2> time@
 --
