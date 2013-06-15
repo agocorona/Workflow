@@ -113,7 +113,6 @@ module Control.Workflow
 , newWFRef
 , stepWFRef
 , readWFRef
-, getWFRef
 -- * State manipulation
 , writeWFRef
 , moveState
@@ -333,8 +332,11 @@ instance  (HasFork io, MonadIO io
                else
                 fork $
                      exec1 str f >> labelFinish r str Nothing
+                        `CMC.catch` \(E.ErrorCall str) -> do
+                                     liftIO . atomicallySync $ writeWFRef r (WFInfo str True  (Just $ WFException str))   -- !> ("ERROR *****"++show e)
+                                     killWF1 $ keyWF str ()
                         `CMC.catch` \(e :: E.SomeException) -> do
-                                     liftIO . atomicallySync $ writeWFRef r (WFInfo str True . Just . WFException $ show e)   -- !> ("ERROR *****"++show e)
+                                     liftIO . atomicallySync $ writeWFRef r (WFInfo str True  (Just . WFException $ show e))   -- !> ("ERROR *****"++show e)
                                      killWF1 $ keyWF str ()
 
 
@@ -454,8 +456,7 @@ getTempName= liftIO $ do
 -- | Lifts a monadic computation  to the WF monad, and provides  transparent state loging and  resuming the computation
 -- Note: Side effect can be repeated at recovery time if the log was not complete before shut down
 -- see the integer sequence example, above.
-step :: ( Monad m
-        , MonadIO m
+step :: ( MonadIO m
         , Serialize a
         , Typeable a)
         =>   m a
@@ -607,10 +608,16 @@ start namewf f1 v =  do
                  clearRunningFlag name
                  return $ Left e)
     `CMC.catch`
-           (\(e :: CE.SomeException) -> liftIO $ do
+           (\(E.ErrorCall msg) ->do
+                 let name=  keyWF namewf v
+                 clearRunningFlag name
+                 return . Left $ WFException msg)
+    `CMC.catch`
+           (\(e :: CE.SomeException) ->  liftIO $ do
                  let name=  keyWF namewf v
                  clearRunningFlag name
                  return . Left $ WFException $ show e )
+
 
 
 
@@ -943,31 +950,27 @@ stepWFRef exp= do
        liftIO $ atomically $ writeDBRef self s'
        r  `seq` return  (s',(ref,r)) )
 
--- | return a reference to the nth elem of a workflow. The workflow is identified by
--- the workflow string and the parameter. If there is no parameter, use ()
--- In case the type of the reference is not the expected, it return an error string.This is only known at runtime
+-- | return a reference to the last logged entry in the workflow
+-- In case the type of the reference is not of the type expected, it return an error string.
+--getWFRef ::(Typeable b, Serialize b,MonadIO m) =>  Workflow m (Either String (WFRef b))
+--getWFRef=  WF $ \s -> liftIO $ doit s
+-- where
+-- doit s@Stat{..}= do
+--     let (n,flag)= if recover
+--                     then (state  - (L.length  versions ) -1 ,False)
+--                     else (state - 1 ,True)
 --
--- In case the workflow is not found it produces an error message
-getWFRef ::(Typeable b, Serialize b, Indexable a) => Int -> String -> a -> STM(Either String (WFRef b))
-getWFRef n wfname v= wfref
-  where
-  wfref= do
-     let ref = getDBRef $ keyResource stat0{wfName= keyWF wfname  v}
-     s@Stat{..} <- readDBRef ref `onNothing` error ("getWFRef: not found "++ wfname)
-     let (n,flag)= if recover
-                          then (state  - (L.length  versions ) -1 ,False)
-                          else (state - 1 ,True)
-
-         mr= (safeFromIDyn $ versions  !! n) `asTypeOf` typeOfRef wfref
-     case mr `seq` mr of
-       Left s -> return $ Left s
-       Right r -> do
-          let s'= s{references= (n,(toIDyn r,flag)):references }
-          writeDBRef self s'
-          return . Right $ WFRef n ref
-
-  typeOfRef :: STM(Either String (WFRef a)) -> Either String a
-  typeOfRef= undefined
+--         mr= (safeFromIDyn $ versions  !! n !> show n !> show state) `asTypeOf` typeOfRef (doit s)
+--     case mr `seq` mr of
+--       Left r -> return  (s,Left r)
+--       Right r -> do
+--          let s'= s{references= (n,(toIDyn r,flag)):references }
+--          atomically $ writeDBRef self s'
+--          let ref = WFRef n self
+--          return (s,Right  ref)
+--     where
+--     typeOfRef ::  IO (Stat,Either String (WFRef a)) -> Either String a
+--     typeOfRef= undefined
 
 --getNRefs wfname= do
 --   st <-  getResource stat0{wfName= wfname} `onNothing` error ("Workflow not found: "++ wfname)
@@ -1274,6 +1277,27 @@ withTimeout time  f = do
 -- Usually @time2> time@
 --
 -- @time2=0@ means @time2@ is infinite
+--withKillTimeout :: CMC.MonadCatchIO m => String -> Int -> Integer -> m a -> m a
+--withKillTimeout id time time2 f = do
+--  tid <- liftIO myThreadId
+--  tstart <- liftIO getTimeSeconds
+--  let final= liftIO $ do
+--      tnow <-  getTimeSeconds
+--      let ref = getDBRef $ keyResource $ stat0{wfName=id} -- !> (keyResource $ stat0{wfName=id} )
+--      when (time2 /=0) . atomically $ do
+--         s <- readDBRef ref `onNothing`  error ( "withKillTimeout: Workflow not found: "++ id)
+--         writeDBRef ref s{lastActive= tnow,timeout= Just (time2 - fromIntegral (tnow - tstart))}
+--      clearRunningFlag id
+--  let proc= do
+--      twatchdog <- liftIO $ case time of
+--                       0 -> return tid
+--                       _ -> forkIO $ threadDelay (time * 1000000) >> throwTo tid Timeout
+--      r <- f
+--      liftIO $ killThread twatchdog
+--      return r
+--
+--  proc   `CMC.finally`  final
+
 withKillTimeout :: CMC.MonadCatchIO m => String -> Int -> Integer -> m a -> m a
 withKillTimeout id time time2 f = do
   tid <- liftIO myThreadId
@@ -1295,6 +1319,8 @@ withKillTimeout id time time2 f = do
 
           throw Timeout               -- !> "Timeout 2"
       _ -> throw e
+
+
 
 transientTimeout 0= atomically $ newTVar False
 transientTimeout t= do
