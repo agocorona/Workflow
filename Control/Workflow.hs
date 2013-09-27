@@ -71,7 +71,7 @@ Show,Read  RefSerialize and Data Binary instances.
 
 
 
-"Control.Workflow.Patterns"  contains higuer level workflow patters of multiuser workflows
+"Control.Workflow.Patterns"  contains higher level workflow patterns for handling multiple workflows
 
 "Control.Workflow.Configuration" permits the use of workflows for configuration purposes
 
@@ -138,8 +138,6 @@ module Control.Workflow
 , killWF
 , delWF
 , killThreadWF1
-, killWF1
-, delWF1
 , delWFHistory
 , delWFHistory1
 -- * Log writing policy
@@ -148,6 +146,10 @@ module Control.Workflow
 -- * Print log history
 , showHistory
 , isInRecover
+-- * Low leve, internal use
+, runWF1
+, getState
+
 )
 
 where
@@ -155,6 +157,7 @@ where
 import Prelude hiding (catch)
 import System.IO.Unsafe
 import Control.Monad(when,liftM)
+import Control.Applicative
 import qualified Control.Exception as CE (Exception,AsyncException(ThreadKilled), SomeException, ErrorCall, throwIO, handle,finally,catch,block,unblock)
 import Control.Concurrent -- (forkIO,threadDelay, ThreadId, myThreadId, killThread)
 import Control.Concurrent.STM
@@ -188,9 +191,8 @@ import Unsafe.Coerce
 import System.Mem.StableName
 import Control.Workflow.Stat
 
-import Debug.Trace
-a !> b= trace b a
-
+--import Debug.Trace
+--(!>)= flip trace
 
 type Workflow m = WF  Stat  m   -- not so scary
 
@@ -249,6 +251,15 @@ instance  (Monad m
           where
      plift = step
 
+instance  (Monad m, Functor m) => Applicative  (Workflow m) where
+   pure x= return x
+   WF f <*> WF g= WF $ \s ->  do
+        (s1, k) <- f s
+        (s2, x) <- g s1
+        return  (s2,k x)
+
+
+
 -- |  An instance of MonadTrans is an instance of PMonadTrans
 instance (MonadTrans t, Monad m) => PMonadTrans t m a where
     plift= Control.Monad.Trans.lift
@@ -262,7 +273,7 @@ instance MonadIO m => MonadIO (WF Stat  m) where
    liftIO= unsafeIOtoWF
 
 
-{- | adapted from the @MonadCatchIO-mtl@ package. However, in tis case is needed to express serializable constraints about the  returned values,
+{- | Adapted from the @MonadCatchIO-mtl@ package. However, in this case it is needed to express serializable constraints about the  returned values,
 so the usual class definitions for lifting IO functions are not suitable.
 -}
 
@@ -293,8 +304,7 @@ instance (Serialize a
      expwf <- step $ getTempName
      excwf <- step $ getTempName
      step $ do
-        ex <- CMC.catch (exec1d expwf exp >>= return . Right
-                                           ) $ \e-> return $ Left e
+        ex <- CMC.catch (exec1d expwf exp >>= return . Right ) $ \e-> return $ Left e
 
         case ex of
            Right r -> return r                -- All right
@@ -322,7 +332,6 @@ instance HasFork IO where
 
 instance  (HasFork io, MonadIO io
           , CMC.MonadCatchIO io)
-
           => HasFork (WF Stat  io) where
    fork f = do
     (r,info@(WFInfo str finished status)) <- stepWFRef $ getTempName >>= \n -> return(WFInfo n False  Nothing)
@@ -414,8 +423,7 @@ exec1nc str f  =do
     case v of
       Left err -> CMC.throw err
       Right (name, f, stat) -> do
-         r <- runWF1 name f  stat False
-         return  r
+         runWF1 name f  stat False
 
         `CMC.catch`
            (\(e :: CE.SomeException) -> liftIO $ do
@@ -470,7 +478,7 @@ step mx= WF(\s -> do
 --                                      !> (unpack $ runW $ showp $  versions s)
 --                                      !> (show $ references s)
 --                                      !> (show $ "recover="++ show( recover s))
---                                      !> "^^^^^^^^^^^^^^^^^^^^"
+--                                      !> "^^^^^^^^^^^^^^^^^^^"
         if recovers && not (L.null versionss)
           then
             return (s{versions=L.tail versionss }, fromIDyn $ L.head versionss )
@@ -506,6 +514,7 @@ stepExec1  sref  mx= do
 --undoStep :: Monad m => Workflow m ()
 --undoStep= WF $ \s@Stat{..} -> return(s{state=state-1, versions= L.tail versions},())
 
+-- | True if the workflow in recovery mode, reading the log to recover the process state
 isInRecover :: Monad m => Workflow m Bool
 isInRecover = WF(\s@Stat{..} ->
      if recover  && not (L.null  versions ) then  return(s,True )
@@ -585,14 +594,14 @@ stepDebug  f = r
 -- | Start or continue a workflow  .
 --  'WFErrors' and exceptions are returned as @Left err@ (even if they were triggered as exceptions).
 -- Other exceptions are returned as @Left (Exception e)@
--- use `killWF` or `delWF` in case of erro to clear the log.
+-- use `killWF` or `delWF` in case of error to clear the log.
 start
     :: ( CMC.MonadCatchIO m
        , MonadIO m
        , Indexable a
        , Serialize a
        , Typeable a)
-    => String                        -- ^ name thar identifies the workflow.
+    => String                        -- ^ name that identifies the workflow.
     -> (a -> Workflow m b)           -- ^ workflow to execute
     -> a                             -- ^ initial value (ever use the initial value for restarting the workflow)
     -> m  (Either WFErrors b)        -- ^ result of the computation
@@ -606,12 +615,12 @@ start namewf f1 v =  do
            (\(e :: WFErrors) -> do
                  let name=  keyWF namewf v
                  clearRunningFlag name
-                 return $ Left e)
+                 return $ Left e )
     `CMC.catch`
            (\(E.ErrorCall msg) ->do
                  let name=  keyWF namewf v
                  clearRunningFlag name
-                 return . Left $ WFException msg)
+                 return . Left $ WFException msg )
     `CMC.catch`
            (\(e :: CE.SomeException) ->  liftIO $ do
                  let name=  keyWF namewf v
@@ -677,13 +686,13 @@ getState  namewf f v= liftIO . atomically $ getStateSTM
              safeIOToSTM $ delResource stat1 >> writeResource stat1
              writeDBRef tvRunningWfs . Running $ M.insert key (namewf,Just mythread) map
              writeDBRef sref stat1
-             return $ Right (key, f, stat1)
+             return $ Right (key, f, stat1)   -- !> "NEW WF"
 
            Just (wf, started) ->               -- a workflow has been initiated for this object
              if isJust started
-                then return $ Left AlreadyRunning                       -- !> "already running"
-                else  do            -- has been running but not running now
-                   mst <- readDBRef sref
+                then return $ Left AlreadyRunning                  -- !> "already running"
+                else  do
+                   mst <- readDBRef sref                           -- !> "has been running but not running now"
                    stat' <- case mst of
                           Nothing -> return stat1 -- error $ "getState: Workflow not found: "++ key
                           Just s' -> do
@@ -698,7 +707,7 @@ getState  namewf f v= liftIO . atomically $ getStateSTM
                              if isJust (timeout s)
                               then do
                                   tnow <- unsafeIOToSTM getTimeSeconds
-                                  if lastActive s+ fromJust(timeout s) > tnow   -- !>("lastActive="++show (lastActive s) ++ "tnow="++show tnow)
+                                  if lastActive s+ fromJust(timeout s) > tnow    -- !>("lastActive="++show (lastActive s) ++ "tnow="++show tnow)
                                        then
                                          return s{recover= True,timeout=Nothing}
                                        else
@@ -723,7 +732,7 @@ runWF n f s = runWF1 n f s True
 
 
 runWF1 n f s clear=  do
-   (s', v')  <-  st f s{versions= L.tail $ versions s} -- !> (show $ versions s)
+   (s', v')  <-  st f s{versions= L.tail $ versions s}
    liftIO $ if clear then clearFromRunningList n
                      else clearRunningFlag n >> return ()
    return  v'
@@ -732,8 +741,9 @@ runWF1 n f s clear=  do
    -- eliminate the thread from the list of running workflows but leave the state
    clearFromRunningList n = atomicallySync $ do
       Just(Running map) <-  readDBRef tvRunningWfs           -- !> "clearFormRunning"
-      writeDBRef tvRunningWfs . Running $ M.delete   n   map -- `debug` "clearFromRunningList"
+      writeDBRef tvRunningWfs . Running $ M.delete   n   map
 --      flushDBRef (getDBRef n ::  DBRef Stat)
+
 -- | Start or continue a workflow  from a list of workflows  with exception handling.
 --  see 'start' for details about exception and error handling
 startWF
@@ -820,7 +830,7 @@ getWFHistory wfname x=  getResource stat0{wfName=  keyWF wfname  x}
 -- | Delete the history of a workflow.
 -- Be sure that this WF has finished.
 
---{-# DEPRECATED delWFHistory, delWFHistory1 "use delWF and delWF1 instead" #-}
+--{-# DEPRECATED delWFHistory, delWFHistory1 "use delWF  instead" #-}
 
 delWFHistory name1 x = do
       let name= keyWF name1 x
@@ -871,13 +881,16 @@ killThreadWFm name= do
 
 -- | Kill the process (if running) and drop it from the list of
 --  restart-able workflows. Its state history remains , so it can be inspected with
---  `getWfHistory` `printWFHistory` and so on
+--  `getWfHistory` `printWFHistory` and so on.
+--
+-- When the workflow has been called with no parameter, use: ()
+--
 killWF :: (Indexable a,MonadIO m) => String -> a -> m ()
 killWF name1 x= do
        let name= keyWF name1 x
        killWF1 name
 
--- | A version of `KillWF` for workflows started wit no parameter by `exec1`
+
 killWF1 :: MonadIO m => String  -> m ()
 killWF1 name = do
        map <- killThreadWFm name
@@ -886,6 +899,8 @@ killWF1 name = do
 
 -- | Delete the WF from the running list and delete the workflow state from persistent storage.
 --  Use it to perform cleanup if the process has been killed.
+--
+-- When the workflow has been called with no parameter, use: ()
 delWF :: ( Indexable a
          , MonadIO m
          , Typeable a)
@@ -895,21 +910,19 @@ delWF name1 x=   do
   delWF1 name
 
 
--- | A version of `delWF` for workflows started wit no parameter by `exec1`
-delWF1 :: MonadIO m=> String  -> m()
-delWF1 name= liftIO $ do
-  mrun <- atomically $ readDBRef tvRunningWfs
+
+delWF1 :: MonadIO m => String  -> m()
+delWF1 name= liftIO $ atomicallySync $ do
+  mrun <-  readDBRef tvRunningWfs
   case mrun of
     Nothing -> return()
     Just (Running map) -> do
-      atomicallySync . writeDBRef tvRunningWfs . Running $! M.delete   name   map
-      delWFHistory1 name
-
-
+       writeDBRef tvRunningWfs . Running $! M.delete   name   map
+       delDBRef  (getDBRef $ keyResource $ stat0{wfName= name} :: DBRef Stat)
 
 
 clearRunningFlag name= liftIO $ atomically $ do
-  Running map <-readDBRef tvRunningWfs `onNothing` error ( "clearRunningFLag: non existing workflows" ++ name)
+  Running map <- readDBRef tvRunningWfs `onNothing` error ( "clearRunningFLag: no workflow list" ++ name)
   case M.lookup  name map of
     Just(_, Nothing) -> return (map,Nothing)
     Just(v, Just th) -> do
@@ -1002,7 +1015,7 @@ readWFRef (WFRef n ref)= do
         Just (r,_) -> return . Just $ fromIDyn r
         Nothing -> do
           let  n1=  if recover st then n else state st - n
-          return . Just . fromIDyn $ versions st !! n1 !> (show (L.length $ versions st) ++ " "++ show n1)
+          return . Just . fromIDyn $ versions st !! n1         -- !> (show (L.length $ versions st) ++ " "++ show n1)
 
 --      flushDBRef ref !> "readWFRef"
 --      st <- readDBRef ref `justifyM` (error $ "readWFRef: reference has been deleted from storaga: "++ show ref)
@@ -1073,7 +1086,6 @@ moveState   :: (MonadIO m
              =>String -> a -> a -> m ()
 moveState wf t t'=  liftIO $ do
      atomicallySync $ do
-
            mrun <-  readDBRef tvRunningWfs
            case mrun of
                 Nothing -> return()
@@ -1087,9 +1099,10 @@ moveState wf t t'=  liftIO $ do
      where
      n = keyWF wf t
      n'= keyWF wf t'
-     change n  [Nothing] = error $ "moveState: Workflow not found: "++ show n
-     change n [Just s] = resources{toAdd= [ s{wfName=n',versions = toIDyn t': L.tail( versions s) }]
-                                             ,toDelete=[s]}
+     change n [Nothing]= error $ "moveState: Workflow not found: "++ show n
+     change n [Just s] = resources{toAdd= [s{wfName=n'
+                                            ,versions = toIDyn t': L.tail( versions s) }]
+                                  ,toDelete=[s]}
 
 
 

@@ -1,5 +1,5 @@
 name: Workflow
-version: 0.8.0.2
+version: 0.8.0.7
 cabal-version: >= 1.6
 build-type: Simple
 license: BSD3
@@ -7,7 +7,7 @@ license-file: LICENSE
 maintainer: agocorona@gmail.com
 stability: experimental
 bug-reports: agocorona@gmail.com
-synopsis:    Workflow patterns and a monad for thread state logging & recovery
+synopsis:    Workflow patterns over a monad for thread state logging & recovery
 description: Transparent support  for interruptible computations. A workflow can be seen as a persistent thread that executes a
              monadic computation. Therefore, it can be used in very time consuming computations such are CPU intensive calculations
              or procedures that are most of the time waiting for the action of a process or an user, that are prone to comunication
@@ -16,10 +16,15 @@ description: Transparent support  for interruptible computations. A workflow can
              .             .
              The computation can be restarted at the interrupted point thanks to its logged state in permanent storage.
              The thread state is located in files by default. It can be moved and continued in another computer.
-             Besides that, the package also provides other higher level services associated to workflows: Workflow patters and
-             and a general configuarion utility.
+             Besides that, the package also provides other higher level services associated to workflows: Workflow patterns,
+             and a general configuarion utility, workflow observation events and references to the internal state.
+             The state can be stored maintaining memory references (using the "RefSerialize" package), so that it is possible to track the modifications
+             of a big structure (for example a document) along the workflow execution.
              .
              See "Control.Workflow" for details
+             .
+             In this release:
+             * adapted to the changes in default persistence in TCache
 
 category: Control, Workflow
 
@@ -33,7 +38,7 @@ extra-source-files: Demos/Fact.hs Demos/Inspect.hs
 
 
 library
-    build-depends: MonadCatchIO-mtl -any, RefSerialize ==0.3.1.* ,
+    build-depends: MonadCatchIO-transformers -any, RefSerialize ==0.3.1.* ,
                    TCache -any && <1.0, base >=4 && <5, binary -any, bytestring -any,
                    containers -any, directory -any, extensible-exceptions -any,
                     mtl -any, old-time -any, stm >2, vector -any
@@ -41,13 +46,14 @@ library
     exposed-modules: Control.Workflow
                      Control.Workflow.Configuration
                      Control.Workflow.Patterns
+                     Control.Workflow.Stat
     exposed: True
     buildable: True
     extensions: OverlappingInstances UndecidableInstances
                 MultiParamTypeClasses ExistentialQuantification
                 TypeSynonymInstances RecordWildCards DeriveDataTypeable
     hs-source-dirs: .
-    other-modules: Control.Workflow.Stat
+    other-modules:
 
 
 source-repository head

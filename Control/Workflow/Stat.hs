@@ -142,7 +142,7 @@ instance Indexable (WFRef a) where
 pathWFlows=  (defPath (1:: Int)) ++ "workflow/"
 stFName st = pathWFlows ++ keyResource st
 
-Persist fr fw fd = defaultPersist
+Persist fr fw fd = filePersist
 
 --nheader= "/header"
 --nlog= "/log"
@@ -160,7 +160,7 @@ instance IResource Stat where
 
   delResource st= fd  (stFName st) -- removeFile (stFName st)  `catch`\(e :: IOError) -> return ()
 
-  writeResource runn@(Running _)=  B.writeFile (stFName runn)  . runW $ showp runn
+  writeResource runn@(Running _)=  fw{- B.writeFile -} (stFName runn)  . runW $ showp runn
 
 --
   writeResource stat@Stat{..}

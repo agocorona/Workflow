@@ -7,10 +7,11 @@ import Data.TCache hiding (syncWrite,SyncManual)
 main = do
  syncWrite SyncManual
  getName >>= putStrLn
+ getName >>= putStrLn
  syncCache
 
 
-getName=  exec1nc "test" $ do
+getName= exec1nc "test" $ do
     name <- step $ do
                putStrLn "your name?"
                getLine
@@ -19,3 +20,4 @@ getName=  exec1nc "test" $ do
                getLine
 
     return $ "hello " ++ name++ " "++ surname
+

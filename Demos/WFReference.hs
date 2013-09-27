@@ -10,10 +10,9 @@ import Control.Monad.Trans
 
 
 main= do
-
+   syncWrite SyncManual
    (ref,ref2) <- exec1 "WFRef" $ do
              step $ return (1 :: Int)
-
              ref <- newWFRef  "bye initial value1"
 
              step $ return (3 :: Int)
