@@ -56,7 +56,7 @@ the log is not complete. This may happen after an unexpected shutdown (in this c
 or due to an asynchronous log writing policy. (see `syncWrite`)
 
 When the step results are big and complex, use the "Data.RefSerialize" package to define  the (de)serialization instances
-The log size will be reduced. printWFHistory` method will print the structure changes
+The log size will be reduced. showHistory` method will print the structure changes
 in each step.
 
 If instead of `RefSerialize`, you use read and show instances, there will
@@ -180,7 +180,7 @@ import Data.Maybe
 import Data.IORef
 import System.IO.Unsafe(unsafePerformIO)
 import  Data.Map as M(Map,fromList,elems, insert, delete, lookup,toList, fromList,keys)
-import qualified Control.Monad.CatchIO as CMC
+import qualified Control.Monad.Catch as CMC
 import qualified Control.Exception.Extensible as E
 
 import Data.TCache
@@ -297,27 +297,27 @@ throw = liftIO . E.throwIO
 
 
 
-instance (Serialize a
-         , Typeable a,MonadIO m, CMC.MonadCatchIO m)
-         => MonadCatchIO (WF Stat m) a where
-   catch exp exc = do
-     expwf <- step $ getTempName
-     excwf <- step $ getTempName
-     step $ do
-        ex <- CMC.catch (exec1d expwf exp >>= return . Right ) $ \e-> return $ Left e
-
-        case ex of
-           Right r -> return r                -- All right
-           Left  e ->exec1d excwf (exc e)
-                         -- An exception occured in the main workflow
-                         -- the exception workflow is executed
-
-
-
-
-   block   exp=WF $ \s -> CMC.block (st exp $ s)
-
-   unblock exp=  WF $ \s -> CMC.unblock (st exp $ s)
+--instance (Serialize a
+--         , Typeable a,MonadIO m, CMC.MonadCatch m)
+--         => MonadCatchIO (WF Stat m) a where
+--   catch exp exc = do
+--     expwf <- step $ getTempName
+--     excwf <- step $ getTempName
+--     step $ do
+--        ex <- CMC.catch (exec1d expwf exp >>= return . Right ) $ \e-> return $ Left e
+--
+--        case ex of
+--           Right r -> return r                -- All right
+--           Left  e ->exec1d excwf (exc e)
+--                         -- An exception occured in the main workflow
+--                         -- the exception workflow is executed
+--
+--
+--
+--
+--   block   exp=WF $ \s -> CMC.block (st exp $ s)
+----
+--   unblock exp=  WF $ \s -> CMC.unblock (st exp $ s)
 
 data WFInfo= WFInfo{ name :: String
                       , finished :: Bool
@@ -331,7 +331,7 @@ instance HasFork IO where
   fork= forkIO
 
 instance  (HasFork io, MonadIO io
-          , CMC.MonadCatchIO io)
+          , CMC.MonadCatch io)
           => HasFork (WF Stat  io) where
    fork f = do
     (r,info@(WFInfo str finished status)) <- stepWFRef $ getTempName >>= \n -> return(WFInfo n False  Nothing)
@@ -359,14 +359,14 @@ instance  (HasFork io, MonadIO io
 --  the parent's WF state.
 wfExec
   :: (Serialize a, Typeable a
-  ,  CMC.MonadCatchIO m, MonadIO m)
+  ,  CMC.MonadCatch m, MonadIO m)
   => Workflow m a -> Workflow m  a
 wfExec f= do
       str <- step $ getTempName
       step $ exec1 str f
 
 -- | A version of exec1 that deletes its state after complete execution or thread killed
-exec1d :: (MonadIO m, CMC.MonadCatchIO m)
+exec1d :: (MonadIO m, CMC.MonadCatch m)
           => String ->  (Workflow m b) ->  m  b
 exec1d str f= do
    r <- exec1 str  f
@@ -382,7 +382,7 @@ exec1d str f= do
 
 
 -- | A version of exec with no seed parameter.
-exec1 ::  ( Monad m, MonadIO m, CMC.MonadCatchIO m)
+exec1 ::  ( Monad m, MonadIO m, CMC.MonadCatch m)
           => String ->  Workflow m a ->   m  a
 
 exec1 str f=  exec str (const f) ()
@@ -394,7 +394,7 @@ exec1 str f=  exec str (const f) ()
 --  the workflow flags are updated even in case of exception
 --  `WFerrors` are raised as exceptions
 exec :: ( Indexable a, Serialize a,  Typeable a
-        , Monad m, MonadIO m, CMC.MonadCatchIO m)
+        , Monad m, MonadIO m, CMC.MonadCatch m)
           => String ->  (a -> Workflow m b) -> a ->  m  b
 exec str f x =
        (do
@@ -403,25 +403,25 @@ exec str f x =
               Right (name, f, stat) -> do
                  r <- runWF name (f x) stat
                  return  r
-              Left err -> CMC.throw err)
+              Left err -> CMC.throwM err)
      `CMC.catch`
        (\(e :: CE.SomeException) -> liftIO $ do
              let name=  keyWF str x
              clearRunningFlag name  --`debug` ("exception"++ show e)
 
-             CMC.throw e )
+             CMC.throwM e )
 
 -- | executes a workflow, but does not mark it as finished even if
 -- the process ended.
 -- It this case, the workflow just will return the last result.
 -- If the workflow was gathering data from user questions for a configuration, then this
 -- primitive will store them in the log the first time, and can be retrieve it the next time.
-exec1nc ::  (  Monad m, MonadIO m, CMC.MonadCatchIO m)
+exec1nc ::  (  Monad m, MonadIO m, CMC.MonadCatch m)
           => String ->  Workflow m a ->   m  a
 exec1nc str f  =do
     v <- getState str f ()
     case v of
-      Left err -> CMC.throw err
+      Left err -> CMC.throwM err
       Right (name, f, stat) -> do
          runWF1 name f  stat False
 
@@ -429,7 +429,7 @@ exec1nc str f  =do
            (\(e :: CE.SomeException) -> liftIO $ do
                  let name=  keyWF str ()
                  clearRunningFlag name  --`debug` ("exception"++ show e)
-                 CMC.throw e )
+                 CMC.throwM e )
         `CMC.finally`
           (liftIO . atomically .
                when(recover stat) $ do
@@ -596,7 +596,7 @@ stepDebug  f = r
 -- Other exceptions are returned as @Left (Exception e)@
 -- use `killWF` or `delWF` in case of error to clear the log.
 start
-    :: ( CMC.MonadCatchIO m
+    :: ( CMC.MonadCatch m
        , MonadIO m
        , Indexable a
        , Serialize a
@@ -747,7 +747,7 @@ runWF1 n f s clear=  do
 -- | Start or continue a workflow  from a list of workflows  with exception handling.
 --  see 'start' for details about exception and error handling
 startWF
-    ::  ( CMC.MonadCatchIO m, MonadIO m
+    ::  ( CMC.MonadCatch m, MonadIO m
         , Serialize a, Serialize b
         , Typeable a
         , Indexable a)
@@ -762,13 +762,17 @@ startWF namewf v wfs=
 
 
 
--- | Re-start the non finished workflows in the list, for all the initial values that they may have been invoked
+-- | Re-start the non finished workflows in the list, for all the initial values
+-- that they may have been invoked. The list contain he identifiers of the workflows and
+-- the procedures to be called. All the workflows initiated with exec* or start* will be
+-- restarted with all possible seed values.
+
 restartWorkflows
    :: (Serialize a, Typeable a)
    =>  M.Map String (a -> Workflow IO b)     -- the list of workflows that implement the module
    -> IO ()                    -- Only workflows in the IO monad can be restarted with restartWorkflows
 restartWorkflows map = do
-  mw <- liftIO $ getResource ((Running undefined ) )   -- :: IO (Maybe(Stat a))
+  mw <- atomically $ readDBRef tvRunningWfs   -- :: IO (Maybe(Stat a))
   case mw of
     Nothing -> return ()
     Just (Running all) ->  mapM_ start . mapMaybe  filter  . toList  $ all
@@ -781,7 +785,7 @@ restartWorkflows map = do
       case mf of
         Nothing -> return ()
         Just  f -> do
-          let st0= stat0{wfName = kv}
+          let st0 = stat0{wfName = kv}
           mst <- liftIO $ getResource st0
           case mst of
                    Nothing -> error $ "restartWorkflows: workflow not found "++ keyResource st0
@@ -881,7 +885,7 @@ killThreadWFm name= do
 
 -- | Kill the process (if running) and drop it from the list of
 --  restart-able workflows. Its state history remains , so it can be inspected with
---  `getWfHistory` `printWFHistory` and so on.
+--  `getWfHistory` `showHistory` and so on.
 --
 -- When the workflow has been called with no parameter, use: ()
 --
@@ -942,7 +946,7 @@ clearRunningFlag name= liftIO $ atomically $ do
 newWFRef :: ( Serialize a
            , Typeable a
            , MonadIO m
-           , CMC.MonadCatchIO m)
+           , CMC.MonadCatch m)
            => a -> Workflow m  (WFRef a)
 newWFRef x= stepWFRef (return  x) >>= return . fst
 
@@ -1108,15 +1112,15 @@ moveState wf t t'=  liftIO $ do
 
 
 
--- | Log a message in the workflow history. I can be printed out with 'printWFhistory'
+-- | Log a message in the workflow history. I can be printed out with 'showHistory'
 -- The message is printed in the standard output too
-logWF :: MonadIO m => String -> Workflow m  ()
-logWF str=do
-           str <- step . liftIO $ do
-            time <-  getClockTime >>=  toCalendarTime >>= return . calendarTimeToString
-            Prelude.putStrLn str
-            return $ time ++ ": "++ str
-           WF $ \s ->  str  `seq` return (s, ())
+logWF :: MonadIO m => String -> Workflow m ()
+logWF str= do
+   str <- step . liftIO $ do
+    time <-  getClockTime >>=  toCalendarTime >>= return . calendarTimeToString
+    Prelude.putStrLn str
+    return $ time ++ ": "++ str
+   WF $ \s ->  str  `seq` return (s, ())
 
 
 
@@ -1311,7 +1315,7 @@ withTimeout time  f = do
 --
 --  proc   `CMC.finally`  final
 
-withKillTimeout :: CMC.MonadCatchIO m => String -> Int -> Integer -> m a -> m a
+withKillTimeout :: (MonadIO m,CMC.MonadCatch m) => String -> Int -> Integer -> m a -> m a
 withKillTimeout id time time2 f = do
   tid <- liftIO myThreadId
   twatchdog <- liftIO $ forkIO $ threadDelay (time * 1000000) >> throwTo tid Timeout

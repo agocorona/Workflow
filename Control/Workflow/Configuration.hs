@@ -16,7 +16,7 @@ import Data.Typeable
 import Data.RefSerialize
 import Control.Monad.Trans
 import Control.Exception
-import Control.Monad.CatchIO as CMC
+import Control.Monad.Catch as CMC
 
 -------------- configuation
 -- | to execute a computation every time it is invoked. A synonimous of `unsafeIOtoWF`
@@ -29,7 +29,7 @@ once= step
 
 -- | executes a computation with `once` and `ever` statements
 -- a synonym of `exec1nc`
-runConfiguration :: (  Monad m, MonadIO m, CMC.MonadCatchIO m)
+runConfiguration :: (  Monad m, MonadIO m, CMC.MonadCatch m)
                  => String ->  Workflow m a ->   m  a
 runConfiguration  = exec1nc
 

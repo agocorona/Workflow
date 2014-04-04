@@ -1,5 +1,5 @@
 name: Workflow
-version: 0.8.0.7
+version: 0.8.0.8
 cabal-version: >= 1.6
 build-type: Simple
 license: BSD3
@@ -24,7 +24,7 @@ description: Transparent support  for interruptible computations. A workflow can
              See "Control.Workflow" for details
              .
              In this release:
-             * adapted to the changes in default persistence in TCache
+             * minor changes
 
 category: Control, Workflow
 
@@ -38,7 +38,7 @@ extra-source-files: Demos/Fact.hs Demos/Inspect.hs
 
 
 library
-    build-depends: MonadCatchIO-transformers -any, RefSerialize ==0.3.1.* ,
+    build-depends: exceptions -any, RefSerialize ==0.3.1.* ,
                    TCache -any && <1.0, base >=4 && <5, binary -any, bytestring -any,
                    containers -any, directory -any, extensible-exceptions -any,
                     mtl -any, old-time -any, stm >2, vector -any

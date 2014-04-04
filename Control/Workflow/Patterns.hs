@@ -78,7 +78,7 @@ vote, sumUp, Select(..)
 import Control.Concurrent.STM
 import Data.Monoid
 
-import qualified Control.Monad.CatchIO as CMC
+import qualified Control.Monad.Catch as CMC
 
 import Control.Workflow.Stat
 import Control.Workflow
@@ -102,7 +102,7 @@ data ActionWF a= ActionWF (WFRef(Maybe a)) ThreadId -- (WFRef (String, Bool))
 split :: ( Typeable b
            , Serialize b
            , HasFork io
-           , CMC.MonadCatchIO io)
+           , CMC.MonadCatch io)
           => [a -> Workflow io b] -> a  -> Workflow io [ActionWF b]
 split actions a = mapM (\ac ->
      do
@@ -161,7 +161,7 @@ select ::
 --         , Serialize [a]
          , Typeable a
          , HasFork io
-         , CMC.MonadCatchIO io)
+         , CMC.MonadCatch io)
          => Integer
          -> (a ->   STM Select)
          -> [ActionWF a]
@@ -187,7 +187,7 @@ select timeout check actions=   do
                            addRes i r
                            unsafeIOToSTM $ throwTo parent FinishDiscard
 
-               n <- liftIO $ CMC.block $ do
+               n <- liftIO $ do -- liftIO $ CMC.block $ do
                      n <- takeMVar count
                      putMVar count (n+1)
                      return n                   -- !> ("SELECT" ++ show n)
@@ -241,7 +241,7 @@ vote
 --         , Serialize [b]
          , Typeable b
          , HasFork io
-         , CMC.MonadCatchIO io)
+         , CMC.MonadCatch io)
       => Integer
       -> [a -> Workflow io  b]
       -> ([b] -> Workflow io c)
@@ -260,7 +260,7 @@ sumUp
      , Typeable b
      , Monoid b
      , HasFork io
-     , CMC.MonadCatchIO io)
+     , CMC.MonadCatch io)
      => Integer
      -> [a -> Workflow io b]
      -> a
@@ -275,7 +275,7 @@ main= do
   r <- exec1 "sumup" $ sumUp 0 [f 1, f 2] "0"
   print r
 
-  `CMC.catch` \(e::SomeException) -> syncCache       --  !> "syncCache"
+  `CMC.catch` \(e:: SomeException) -> syncCache       --  !> "syncCache"
 
 
 f :: Int -> String -> Workflow IO String
