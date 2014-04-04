@@ -158,7 +158,7 @@ import Prelude hiding (catch)
 import System.IO.Unsafe
 import Control.Monad(when,liftM)
 import Control.Applicative
-import qualified Control.Exception as CE (Exception,AsyncException(ThreadKilled), SomeException, ErrorCall, throwIO, handle,finally,catch,block,unblock)
+import qualified Control.Exception as CE (Exception,AsyncException(ThreadKilled), SomeException, ErrorCall, throwIO, handle,finally,catch)
 import Control.Concurrent -- (forkIO,threadDelay, ThreadId, myThreadId, killThread)
 import Control.Concurrent.STM
 import GHC.Conc(unsafeIOToSTM)
