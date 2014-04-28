@@ -9,6 +9,7 @@
             , DeriveDataTypeable
             , RecordWildCards
             , BangPatterns
+            , CPP
           #-}
 {-# OPTIONS -IControl/Workflow       #-}
 
@@ -158,7 +159,11 @@ import Prelude hiding (catch)
 import System.IO.Unsafe
 import Control.Monad(when,liftM)
 import Control.Applicative
+#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 707
 import qualified Control.Exception as CE (Exception,AsyncException(ThreadKilled), SomeException, ErrorCall, throwIO, handle,finally,catch)
+#else
+import qualified Control.Exception as CE (Exception,AsyncException(ThreadKilled), SomeException, ErrorCall, throwIO, handle,finally,catch,block,unblock)
+#endif
 import Control.Concurrent -- (forkIO,threadDelay, ThreadId, myThreadId, killThread)
 import Control.Concurrent.STM
 import GHC.Conc(unsafeIOToSTM)
