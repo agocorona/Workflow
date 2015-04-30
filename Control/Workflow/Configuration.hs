@@ -29,7 +29,7 @@ once= step
 
 -- | executes a computation with `once` and `ever` statements
 -- a synonym of `exec1nc`
-runConfiguration :: (  Monad m, MonadIO m, CMC.MonadCatch m)
+runConfiguration :: (  Monad m, MonadIO m, CMC.MonadMask m)
                  => String ->  Workflow m a ->   m  a
 runConfiguration  = exec1nc
 

@@ -108,8 +108,8 @@ instance  Serialize Stat where
         rStat= do
               integer
               integer
-              versions   <- readp
-              (wfName, state, timeout, lastActive,references,cont) <- getHeader
+              versions   <- readp                                               -- !> "read versions"
+              (wfName, state, timeout, lastActive,references,cont) <- getHeader -- !> "read header"
 
 
               let self= getDBRef $ keyResource stat0{wfName= wfName}

@@ -1,5 +1,6 @@
+
 name: Workflow
-version: 0.8.0.8
+version: 0.8.2
 cabal-version: >= 1.6
 build-type: Simple
 license: BSD3
@@ -24,7 +25,7 @@ description: Transparent support  for interruptible computations. A workflow can
              See "Control.Workflow" for details
              .
              In this release:
-             * minor changes
+             * Adaptation for MonadMask instance introduced in the package exceptions-0.6
 
 category: Control, Workflow
 
@@ -38,10 +39,10 @@ extra-source-files: Demos/Fact.hs Demos/Inspect.hs
 
 
 library
-    build-depends: exceptions -any, RefSerialize ==0.3.1.* ,
-                   TCache -any && <1.0, base >=4 && <5, binary -any, bytestring -any,
-                   containers -any, directory -any, extensible-exceptions -any,
-                    mtl -any, old-time -any, stm >2, vector -any
+    build-depends: exceptions >= 0.6, RefSerialize  ,
+                   TCache , base >=4 && <5, binary , bytestring ,
+                   containers , directory -any, extensible-exceptions ,
+                    mtl , old-time , stm >2, vector
 
     exposed-modules: Control.Workflow
                      Control.Workflow.Configuration

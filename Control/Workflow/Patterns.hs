@@ -102,7 +102,7 @@ data ActionWF a= ActionWF (WFRef(Maybe a)) ThreadId -- (WFRef (String, Bool))
 split :: ( Typeable b
            , Serialize b
            , HasFork io
-           , CMC.MonadCatch io)
+           , CMC.MonadMask io)
           => [a -> Workflow io b] -> a  -> Workflow io [ActionWF b]
 split actions a = mapM (\ac ->
      do
@@ -161,7 +161,7 @@ select ::
 --         , Serialize [a]
          , Typeable a
          , HasFork io
-         , CMC.MonadCatch io)
+         , CMC.MonadMask io)
          => Integer
          -> (a ->   STM Select)
          -> [ActionWF a]
@@ -241,7 +241,7 @@ vote
 --         , Serialize [b]
          , Typeable b
          , HasFork io
-         , CMC.MonadCatch io)
+         , CMC.MonadMask io)
       => Integer
       -> [a -> Workflow io  b]
       -> ([b] -> Workflow io c)
@@ -260,7 +260,7 @@ sumUp
      , Typeable b
      , Monoid b
      , HasFork io
-     , CMC.MonadCatch io)
+     , CMC.MonadMask io)
      => Integer
      -> [a -> Workflow io b]
      -> a

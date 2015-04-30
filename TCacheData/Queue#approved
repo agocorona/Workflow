@@ -1,9 +1,0 @@
-"approved" [ v53] [] 
-where{
- v47= "title" ;
- v48= "aaaa" ;
- v49= "bbbb" ;
- v53= Document "title"  v54;
- v54= [ v47, v48, v49] ;
- 
-}

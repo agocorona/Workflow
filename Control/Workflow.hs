@@ -212,7 +212,7 @@ instance Monad m =>  Monad (WF  s m) where
 
 
 
-instance (Monad m,Functor m)  => Functor (Workflow m ) where
+instance (Monad m,Functor m)  => Functor (WF  s m ) where
   fmap f (WF g)= WF (\s -> do
                 (s1, x) <- g s
                 return (s1, f x))
@@ -256,7 +256,7 @@ instance  (Monad m
           where
      plift = step
 
-instance  (Monad m, Functor m) => Applicative  (Workflow m) where
+instance  (Monad m, Functor m) => Applicative  (WF s m) where
    pure x= return x
    WF f <*> WF g= WF $ \s ->  do
         (s1, k) <- f s
@@ -421,7 +421,7 @@ exec str f x =
 -- It this case, the workflow just will return the last result.
 -- If the workflow was gathering data from user questions for a configuration, then this
 -- primitive will store them in the log the first time, and can be retrieve it the next time.
-exec1nc ::  (  Monad m, MonadIO m, CMC.MonadCatch m)
+exec1nc ::  (  Monad m, MonadIO m, CMC.MonadMask m)
           => String ->  Workflow m a ->   m  a
 exec1nc str f  =do
     v <- getState str f ()
