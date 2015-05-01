@@ -1,6 +1,6 @@
-
+﻿
 name: Workflow
-version: 0.8.2
+version: 0.8.3
 cabal-version: >= 1.6
 build-type: Simple
 license: BSD3

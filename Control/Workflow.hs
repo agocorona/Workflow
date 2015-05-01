@@ -26,7 +26,8 @@ A small example that print the sequence of integers in te console
 if you interrupt the progam, when restarted again, it will
 start from the last  printed number
 
-@module Main where
+@
+module Main where
 import Control.Workflow
 import Control.Concurrent(threadDelay)
 import System.IO (hFlush,stdout)
@@ -38,7 +39,8 @@ mcount n= do `step` $  do
              mcount (n+1)
              return () -- to disambiguate the return type
 
-main= `exec1`  \"count\"  $ mcount (0 :: Int)@
+main= `exec1`  \"count\"  $ mcount (0 :: Int)
+@
 
 >>>runghc demos\sequence.hs
 >0 1 2 3
@@ -972,42 +974,6 @@ stepWFRef exp= do
        liftIO $ atomically $ writeDBRef self s'
        r  `seq` return  (s',(ref,r)) )
 
--- | return a reference to the last logged entry in the workflow
--- In case the type of the reference is not of the type expected, it return an error string.
---getWFRef ::(Typeable b, Serialize b,MonadIO m) =>  Workflow m (Either String (WFRef b))
---getWFRef=  WF $ \s -> liftIO $ doit s
--- where
--- doit s@Stat{..}= do
---     let (n,flag)= if recover
---                     then (state  - (L.length  versions ) -1 ,False)
---                     else (state - 1 ,True)
---
---         mr= (safeFromIDyn $ versions  !! n !> show n !> show state) `asTypeOf` typeOfRef (doit s)
---     case mr `seq` mr of
---       Left r -> return  (s,Left r)
---       Right r -> do
---          let s'= s{references= (n,(toIDyn r,flag)):references }
---          atomically $ writeDBRef self s'
---          let ref = WFRef n self
---          return (s,Right  ref)
---     where
---     typeOfRef ::  IO (Stat,Either String (WFRef a)) -> Either String a
---     typeOfRef= undefined
-
---getNRefs wfname= do
---   st <-  getResource stat0{wfName= wfname} `onNothing` error ("Workflow not found: "++ wfname)
---   return $ L.length $ references st
-
--- |return a reference to the last step result
---getWFRef ::(MonadIO m,Serialize a, Typeable a) =>  Monad m =>  a -> Workflow m (WFRef a)
---getWFRef r = WF(\s@Stat{..} -> do
---       let  (n,flag)= if recover
---                          then (state  - (L.length  versions) -1  ,False)
---                          else (state -1 ,True)
---            ref = WFRef n self
---            s'= s{references= (n,(toIDyn r,flag)):references }
---       liftIO $ atomically $ writeDBRef self s'
---       r  `seq` return  (s',ref) )
 
 
 -- | Read the content of a Workflow reference. Note that its result is not in the Workflow monad
@@ -1026,16 +992,7 @@ readWFRef (WFRef n ref)= do
           let  n1=  if recover st then n else state st - n
           return . Just . fromIDyn $ versions st !! n1         -- !> (show (L.length $ versions st) ++ " "++ show n1)
 
---      flushDBRef ref !> "readWFRef"
---      st <- readDBRef ref `justifyM` (error $ "readWFRef: reference has been deleted from storaga: "++ show ref)
 
---      let elems= case ms of
---            Just s -> versions s ++  (L.reverse $ L.take (state s' - state s)   (versions s'))
---            Nothing -> L.reverse $ versions s'
---          x    = elems !! n
---      writeDBRef ref s'
-
---      return . Just $! fromIDyn x
 
 
 justifyM io y=  io >>= return . fromMaybe y

@@ -17,9 +17,9 @@ version = Version [0,8,2] []
 bindir, libdir, datadir, libexecdir, sysconfdir :: FilePath
 
 bindir     = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\bin"
-libdir     = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\x86_64-windows-ghc-7.8.3\\Workflow-0.8.1"
-datadir    = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\x86_64-windows-ghc-7.8.3\\Workflow-0.8.1"
-libexecdir = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\Workflow-0.8.1"
+libdir     = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\x86_64-windows-ghc-7.8.3\\Workflow-0.8.2"
+datadir    = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\x86_64-windows-ghc-7.8.3\\Workflow-0.8.2"
+libexecdir = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\Workflow-0.8.2"
 sysconfdir = "C:\\Users\\magocoal\\AppData\\Roaming\\cabal\\etc"
 
 getBinDir, getLibDir, getDataDir, getLibexecDir, getSysconfDir :: IO FilePath

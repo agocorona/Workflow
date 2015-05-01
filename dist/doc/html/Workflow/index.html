@@ -1,0 +1,16 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8" /><title>Workflow-0.8.2: Workflow patterns over a monad for thread state logging &amp; recovery</title><link href="ocean.css" rel="stylesheet" type="text/css" title="Ocean" /><script src="haddock-util.js" type="text/javascript"></script><script type="text/javascript">//<![CDATA[
+window.onload = function () {pageLoad();};
+//]]>
+</script></head><body><div id="package-header"><ul class="links" id="page-menu"><li><a href="index.html">Contents</a></li><li><a href="doc-index.html">Index</a></li></ul><p class="caption">Workflow-0.8.2: Workflow patterns over a monad for thread state logging &amp; recovery</p></div><div id="content"><div id="description"><h1>Workflow-0.8.2: Workflow patterns over a monad for thread state logging &amp; recovery</h1><div class="doc"><p>Transparent support  for interruptible computations. A workflow can be seen as a persistent thread that executes a
+monadic computation. Therefore, it can be used in very time consuming computations such are CPU intensive calculations
+or procedures that are most of the time waiting for the action of a process or an user, that are prone to comunication
+failures, timeouts or shutdowns. It also can be used if you like to restart your
+program at the point where the user left it last time
+.             .
+The computation can be restarted at the interrupted point thanks to its logged state in permanent storage.
+The thread state is located in files by default. It can be moved and continued in another computer.
+Besides that, the package also provides other higher level services associated to workflows: Workflow patterns,
+and a general configuarion utility, workflow observation events and references to the internal state.
+The state can be stored maintaining memory references (using the <a href="RefSerialize.html">RefSerialize</a> package), so that it is possible to track the modifications
+of a big structure (for example a document) along the workflow execution.</p><p>See <a href="Control-Workflow.html">Control.Workflow</a> for details</p><p>In this release:
+* Adaptation for MonadMask instance introduced in the package exceptions-0.6</p></div></div><div id="module-list"><p class="caption">Modules</p><ul><li><span id="control.n.1" class="module collapser" onclick="toggleSection('n.1')">Control</span><ul id="section.n.1" class="show"><li><span class="module"><span id="control.n.1.1" class="collapser" onclick="toggleSection('n.1.1')">&nbsp;</span><a href="Control-Workflow.html">Control.Workflow</a></span><ul id="section.n.1.1" class="show"><li><span class="module"><a href="Control-Workflow-Configuration.html">Control.Workflow.Configuration</a></span></li><li><span class="module"><a href="Control-Workflow-Patterns.html">Control.Workflow.Patterns</a></span></li><li><span class="module"><a href="Control-Workflow-Stat.html">Control.Workflow.Stat</a></span></li></ul></li></ul></li></ul></div></div><div id="footer"><p>Produced by <a href="http://www.haskell.org/haddock/">Haddock</a> version 2.14.3</p></div></body></html>
