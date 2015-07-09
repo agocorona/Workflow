@@ -29,7 +29,7 @@ if the result is false, the document is added to the persistent list of rejectec
 The program can be interrupted at any moment. The Workflow monad will restartWorkflows
 it at the point where it was interrupted.
 
-This example uses queues from "Data.Persistent.Queue"
+This example uses queues from "Data.Persistent.Collection""
 
 @docApprobal :: Document -> Workflow IO ()
 docApprobal doc =  `getWFRef` \>>= docApprobal1
