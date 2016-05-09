@@ -1,6 +1,6 @@
-A workflow can be seen as a persistent thread. The workflow monad writes a log that permit to restore the thread at the interrupted point. step is the (partial) monad transformer for the Workflow monad. A workflow is defined by its name and, optionally by the key of the single parameter passed. There primitives for starting workflows also restart the interrupted workflow when it has been in execution previously.
+A workflow can be seen as a persistent thread. The workflow monad writes a log that permits to restore the thread at the interrupted point. step is the (partial) monad transformer for the Workflow monad. A workflow is defined by its name and, optionally by the key of the single parameter passed. There primitives for starting workflows also restart the interrupted workflow when it has been in execution previously.
 
-A small example that print the sequence of integers in te console if you interrupt the progam, when restarted again, it will start from the last printed number
+A small example that prints the sequence of integers in the console if you interrupt the program. When restarted again, it will start from the last printed number:
 
 module Main where
 import Control.Workflow
@@ -24,18 +24,19 @@ main= exec1  "count"  $ mcount (0 :: Int)
 >>> runghc demos\sequence.hs
 >7 8 9 10 11
 ...
-The program restart at the last saved step.
 
-As you can see, some side effect can be re-executed after recovery if the log is not complete. This may happen after an unexpected shutdown (in this case) or due to an asynchronous log writing policy. (see syncWrite)
+The program restarts at the last saved step.
 
-When the step results are big and complex, use the Data.RefSerialize package to define the (de)serialization instances The log size will be reduced. printWFHistory` method will print the structure changes in each step.
+As you can see, some side effect can be re-executed after recovery if the log is not complete. This may happen after an unexpected shutdown (in this case) or due to an asynchronous log writing policy (see syncWrite).
 
-If instead of RefSerialize, you use read and show instances, there will be no reduction. but still it will work, and the log will be readable for debugging purposes. The RefSerialize istance is automatically derived from Read, Show instances.
+When the step results are big and complex, use the Data.RefSerialize package to define the (de)serialization instances. Then the log size will be reduced. printWFHistory method will print the structure changes in each step.
+
+If instead of RefSerialize, you use read and show instances, there will be no reduction. But it will still work, and the log will be readable for debugging purposes. The RefSerialize instance is automatically derived from Read, Show instances.
 
 Data.Binary instances are also fine for serialization. To use Binary, just define a binary instance of your data by using showpBinary and readpBinary.
 
-Within the RefSerialize instance of a structure, you can freely mix Show,Read RefSerialize and Data Binary instances.
+Within the RefSerialize instance of a structure, you can freely mix Show, Read, RefSerialize and Data Binary instances.
 
-Control.Workflow.Patterns contains higuer level workflow patters of multiuser workflows
+Control.Workflow.Patterns contains higher level workflow patters of multiuser workflows.
 
-Control.Workflow.Configuration permits the use of workflows for configuration purposes
+Control.Workflow.Configuration permits the use of workflows for configuration purposes.
